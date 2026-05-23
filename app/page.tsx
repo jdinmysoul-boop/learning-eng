@@ -93,21 +93,6 @@ export default function Home() {
     );
   };
 
-  const destroyRecognition = () => {
-    if (!recognitionRef.current) return;
-
-    try {
-      recognitionRef.current.onstart = null;
-      recognitionRef.current.onresult = null;
-      recognitionRef.current.onerror = null;
-      recognitionRef.current.onend = null;
-
-      recognitionRef.current.stop();
-    } catch {}
-
-    recognitionRef.current = null;
-  };
-
   const normalizeText = (text: string) => {
     return text
       .replace(/[^\w\s]/gi, '')
@@ -116,7 +101,6 @@ export default function Home() {
       .trim();
   };
 
-  // 단어 기준 유사도 계산
   const calculateSimilarity = (
     user: string,
     answer: string
@@ -136,6 +120,21 @@ export default function Home() {
     });
 
     return matched / answerWords.length;
+  };
+
+  const destroyRecognition = () => {
+    if (!recognitionRef.current) return;
+
+    try {
+      recognitionRef.current.onstart = null;
+      recognitionRef.current.onresult = null;
+      recognitionRef.current.onerror = null;
+      recognitionRef.current.onend = null;
+
+      recognitionRef.current.stop();
+    } catch {}
+
+    recognitionRef.current = null;
   };
 
   const handleAddSentence = () => {
@@ -212,6 +211,8 @@ export default function Home() {
     setStatus('idle');
 
     setCurrentAttempt(1);
+
+    transcriptRef.current = '';
   };
 
   const resetToMain = () => {
@@ -230,6 +231,8 @@ export default function Home() {
     setCurrentAttempt(1);
 
     setIsRecording(false);
+
+    transcriptRef.current = '';
   };
 
   const checkAnswer = (
@@ -245,11 +248,10 @@ export default function Home() {
     );
 
     console.log(
-      'similarity:',
+      'SIMILARITY:',
       similarity
     );
 
-    // 80% 이상 맞으면 정답 처리
     const isCorrect = similarity >= 0.8;
 
     if (isCorrect) {
@@ -292,6 +294,10 @@ export default function Home() {
 
     destroyRecognition();
 
+    await new Promise((resolve) =>
+      setTimeout(resolve, 700)
+    );
+
     transcriptRef.current = '';
 
     setRecognizedText('');
@@ -300,17 +306,14 @@ export default function Home() {
 
     setIsRecording(true);
 
-    await new Promise((resolve) =>
-      setTimeout(resolve, 200)
-    );
-
     const recognition = new SpeechRecognition();
 
     recognitionRef.current = recognition;
 
     recognition.lang = 'en-US';
 
-    recognition.continuous = true;
+    // 핵심
+    recognition.continuous = false;
 
     recognition.interimResults = true;
 
@@ -337,16 +340,15 @@ export default function Home() {
     };
 
     recognition.onerror = (event: any) => {
-      console.log(event.error);
+      console.log('ERROR:', event.error);
 
-      // aborted는 무시
+      setIsRecording(false);
+
       if (event.error === 'aborted') {
         return;
       }
 
       setStatus('fail');
-
-      setIsRecording(false);
 
       if (event.error === 'no-speech') {
         setRecognizedText(
@@ -392,7 +394,7 @@ export default function Home() {
     checkAnswer(transcriptRef.current);
   };
 
-  const handleRetry = () => {
+  const handleRetry = async () => {
     destroyRecognition();
 
     transcriptRef.current = '';
@@ -404,6 +406,11 @@ export default function Home() {
     setIsRecording(false);
 
     setCurrentAttempt((prev) => prev + 1);
+
+    // Chrome release 대기
+    await new Promise((resolve) =>
+      setTimeout(resolve, 700)
+    );
   };
 
   if (isFinished) {
@@ -509,12 +516,21 @@ export default function Home() {
               </div>
             </div>
 
-            <button
-              onClick={handleRetry}
-              className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-bold w-full transition"
-            >
-              다시 시도하기
-            </button>
+            <div className="space-y-3">
+              <button
+                onClick={handleRetry}
+                className="bg-gray-200 hover:bg-gray-300 text-black px-6 py-3 rounded-xl font-bold w-full transition"
+              >
+                다시 준비하기
+              </button>
+
+              <button
+                onClick={startListening}
+                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-xl font-bold w-full transition"
+              >
+                다시 발음하기
+              </button>
+            </div>
           </div>
         )}
       </div>
