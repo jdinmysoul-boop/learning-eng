@@ -25,9 +25,10 @@ export default function EnglishStudyApp() {
   const [firstTryCount, setFirstTryCount] = useState(0);
 
   const recognitionRef = useRef<any>(null);
-  // ❌ audioStreamRef 완전 제거
   const transcriptRef = useRef('');
-  const finalTranscriptRef = useRef(''); // 확정된 최종 결과만 저장
+  const finalTranscriptRef = useRef('');
+  // ✅ 핵심: 클로저 문제 해결용 ref
+  const isActiveRef = useRef(false);
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
 
@@ -36,7 +37,7 @@ export default function EnglishStudyApp() {
     if (saved) setSentences(JSON.parse(saved));
     audioOk.current = new Audio('/sound_ok.mp3');
     audioError.current = new Audio('/sound_error.mp3');
-    return () => { forceKillRecognition(); };
+    return () => { killRecognition(); };
   }, []);
 
   const saveSentences = (updated: Sentence[]) => {
@@ -67,6 +68,64 @@ export default function EnglishStudyApp() {
     saveSentences(sentences.filter((s) => s.id !== id));
   };
 
+  // ✅ recognition 인스턴스만 정리, isActiveRef는 건드리지 않음
+  const killRecognition = () => {
+    const rec = recognitionRef.current;
+    if (rec) {
+      try {
+        rec.onstart = null;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        rec.abort();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
+  };
+
+  const checkAnswer = (transcript: string, currentSentence: Sentence, attempt: number) => {
+    const similarity = calculateSimilarity(transcript, currentSentence.en);
+    if (similarity >= 0.8) {
+      setStatus('success');
+      if (attempt === 1) setFirstTryCount((prev) => prev + 1);
+      audioOk.current?.play().catch(() => {});
+      setTimeout(() => { moveNext(); }, 1500);
+    } else {
+      setStatus('fail');
+      audioError.current?.play().catch(() => {});
+    }
+  };
+
+  const moveNext = () => {
+    setCurrentIndex((prev) => {
+      const next = prev + 1;
+      if (next >= testQueue.length) {
+        setIsFinished(true);
+        return prev;
+      }
+      return next;
+    });
+    transcriptRef.current = '';
+    finalTranscriptRef.current = '';
+    setRecognizedText('');
+    setStatus('idle');
+    setCurrentAttempt(1);
+  };
+
+  const resetToMain = () => {
+    isActiveRef.current = false;
+    killRecognition();
+    transcriptRef.current = '';
+    finalTranscriptRef.current = '';
+    setRecognizedText('');
+    setStatus('idle');
+    setCurrentAttempt(1);
+    setCurrentIndex(0);
+    setIsTesting(false);
+    setIsFinished(false);
+    setIsRecording(false);
+  };
+
   const startTest = () => {
     if (sentences.length === 0) { alert('문장을 추가하세요.'); return; }
     const shuffled = [...sentences].sort(() => Math.random() - 0.5);
@@ -80,60 +139,6 @@ export default function EnglishStudyApp() {
     setIsTesting(true);
   };
 
-  const moveNext = () => {
-    const next = currentIndex + 1;
-    if (next >= testQueue.length) { setIsFinished(true); return; }
-    transcriptRef.current = '';
-    finalTranscriptRef.current = '';
-    setRecognizedText('');
-    setStatus('idle');
-    setCurrentAttempt(1);
-    setCurrentIndex(next);
-  };
-
-  const resetToMain = () => {
-    forceKillRecognition();
-    transcriptRef.current = '';
-    finalTranscriptRef.current = '';
-    setRecognizedText('');
-    setStatus('idle');
-    setCurrentAttempt(1);
-    setCurrentIndex(0);
-    setIsTesting(false);
-    setIsFinished(false);
-    setIsRecording(false);
-  };
-
-  const checkAnswer = (transcript: string) => {
-    const current = testQueue[currentIndex];
-    if (!current) return;
-    const similarity = calculateSimilarity(transcript, current.en);
-    if (similarity >= 0.8) {
-      setStatus('success');
-      if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
-      audioOk.current?.play().catch(() => {});
-      setTimeout(() => { moveNext(); }, 1500);
-    } else {
-      setStatus('fail');
-      audioError.current?.play().catch(() => {});
-    }
-  };
-
-  // ✅ getUserMedia 완전 제거 — recognition만 정리
-  const forceKillRecognition = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.onstart = null;
-        recognitionRef.current.onresult = null;
-        recognitionRef.current.onerror = null;
-        recognitionRef.current.onend = null;
-        recognitionRef.current.abort();
-      } catch (e) {}
-      recognitionRef.current = null;
-    }
-    setIsRecording(false);
-  };
-
   const startListening = () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -141,33 +146,30 @@ export default function EnglishStudyApp() {
       alert('음성 인식을 지원하지 않는 브라우저입니다. Safari 또는 Chrome을 사용해주세요.');
       return;
     }
-    if (isRecording) return;
 
-    // 이전 인스턴스 정리
-    forceKillRecognition();
+    // 이전 인스턴스 완전 제거
+    killRecognition();
 
     transcriptRef.current = '';
     finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('listening');
 
-    // ✅ 매번 새 인스턴스 생성 (재사용 금지)
+    // ✅ 활성 상태를 ref로 표시 (클로저에서도 최신값 읽힘)
+    isActiveRef.current = true;
+    setIsRecording(true);
+
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
 
     recognition.lang = 'en-US';
-    recognition.continuous = true;   // ✅ true로 변경 — 자동 종료 방지
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      setIsRecording(true);
-    };
 
     recognition.onresult = (event: any) => {
       let interim = '';
       let final = '';
-
       for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i];
         if (result.isFinal) {
@@ -176,8 +178,6 @@ export default function EnglishStudyApp() {
           interim += result[0].transcript + ' ';
         }
       }
-
-      // 확정 결과 누적, 화면엔 확정+임시 모두 표시
       if (final) finalTranscriptRef.current = final.trim();
       const display = (finalTranscriptRef.current + ' ' + interim).trim();
       transcriptRef.current = display;
@@ -185,20 +185,30 @@ export default function EnglishStudyApp() {
     };
 
     recognition.onerror = (event: any) => {
+      if (event.error === 'aborted' || event.error === 'no-speech') return;
       console.error('STT Error:', event.error);
-      // 'no-speech'는 무시, 나머지만 실패 처리
-      if (event.error !== 'aborted' && event.error !== 'no-speech') {
-        setStatus('fail');
-        forceKillRecognition();
-      }
+      isActiveRef.current = false;
+      setStatus('fail');
+      setIsRecording(false);
+      killRecognition();
     };
 
+    // ✅ onend: isActiveRef.current로 판단 (클로저 문제 없음)
     recognition.onend = () => {
-      // ✅ continuous=true인데 onend가 발생하면 자동 재시작 (iOS Safari 대응)
-      if (recognitionRef.current && isRecording) {
-        try { recognitionRef.current.start(); } catch (e) {}
-      } else {
+      if (!isActiveRef.current) {
+        // 의도적으로 종료한 경우
         setIsRecording(false);
+        return;
+      }
+      // iOS Safari가 강제로 끊은 경우 → 같은 인스턴스로 재시작
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
+        } catch (e) {
+          // 재시작 실패 시 새 인스턴스로 재귀 호출
+          recognitionRef.current = null;
+          setTimeout(() => { startListening(); }, 100);
+        }
       }
     };
 
@@ -206,18 +216,17 @@ export default function EnglishStudyApp() {
       recognition.start();
     } catch (e) {
       console.error(e);
+      isActiveRef.current = false;
       setStatus('fail');
-      forceKillRecognition();
+      setIsRecording(false);
+      recognitionRef.current = null;
     }
   };
 
   const submitSpeaking = () => {
-    // ✅ stop() 호출 → onend에서 isRecording=false 처리
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
-    }
-    // onend가 비동기로 오므로 ref에서 즉시 읽음
-    recognitionRef.current = null; // onend 재시작 방지
+    // ✅ 먼저 isActiveRef를 false로 → onend가 재시작하지 않음
+    isActiveRef.current = false;
+    killRecognition();
     setIsRecording(false);
 
     const transcript = transcriptRef.current;
@@ -226,19 +235,27 @@ export default function EnglishStudyApp() {
       setRecognizedText('음성을 인식하지 못했습니다.');
       return;
     }
-    checkAnswer(transcript);
+
+    // ✅ state 비동기 문제 회피: currentIndex/currentAttempt를 직접 읽지 않고 인자로 전달
+    const currentIdx = currentIndex;
+    const attempt = currentAttempt;
+    const current = testQueue[currentIdx];
+    if (!current) return;
+    checkAnswer(transcript, current, attempt);
   };
 
   const handleRetry = () => {
-    forceKillRecognition();
+    isActiveRef.current = false;
+    killRecognition();
     transcriptRef.current = '';
     finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
+    setIsRecording(false);
     setCurrentAttempt((prev) => prev + 1);
   };
 
-  // --- UI (변경 없음) ---
+  // --- UI ---
 
   if (isFinished) {
     return (
