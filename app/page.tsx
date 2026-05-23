@@ -192,6 +192,24 @@ export default function Home() {
     });
   };
 
+  const resetToMain = () => {
+    cleanupRecognition();
+
+    setIsTesting(false);
+
+    setIsFinished(false);
+
+    setCurrentIndex(0);
+
+    setRecognizedText('');
+
+    setStatus('idle');
+
+    setCurrentAttempt(1);
+
+    setIsRecording(false);
+  };
+
   const checkAnswer = (
     transcript: string
   ) => {
@@ -202,9 +220,6 @@ export default function Home() {
     const user = normalizeText(transcript);
 
     const answer = normalizeText(current.en);
-
-    console.log('USER:', user);
-    console.log('ANSWER:', answer);
 
     const isCorrect = user === answer;
 
@@ -244,13 +259,10 @@ export default function Home() {
       return;
     }
 
-    // 이미 녹음중이면 무시
     if (isRecording) return;
 
-    // 이전 recognition 완전 제거
     cleanupRecognition();
 
-    // Chrome recognition release 대기
     await new Promise((resolve) =>
       setTimeout(resolve, 300)
     );
@@ -272,8 +284,6 @@ export default function Home() {
     let handled = false;
 
     recognition.onstart = () => {
-      console.log('LISTEN START');
-
       setIsRecording(true);
 
       setStatus('listening');
@@ -282,22 +292,13 @@ export default function Home() {
     };
 
     recognition.onresult = (event: any) => {
-      console.log('RESULT EVENT');
-
       finalTranscript =
         event.results[0][0].transcript;
-
-      console.log(
-        'TRANSCRIPT:',
-        finalTranscript
-      );
 
       setRecognizedText(finalTranscript);
     };
 
     recognition.onerror = (event: any) => {
-      console.log('ERROR EVENT', event);
-
       if (handled) return;
 
       handled = true;
@@ -326,8 +327,6 @@ export default function Home() {
     };
 
     recognition.onend = () => {
-      console.log('LISTEN END');
-
       if (handled) return;
 
       handled = true;
@@ -393,16 +392,14 @@ export default function Home() {
 
         <button
           onClick={startTest}
-          className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-xl w-full font-bold transition"
+          className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-xl w-full font-bold transition mb-3"
         >
           다시 테스트
         </button>
 
         <button
-          onClick={() =>
-            setIsTesting(false)
-          }
-          className="mt-4 underline text-gray-500"
+          onClick={resetToMain}
+          className="bg-gray-200 hover:bg-gray-300 text-black px-6 py-3 rounded-xl w-full font-bold transition"
         >
           메인으로 돌아가기
         </button>
@@ -568,7 +565,7 @@ export default function Home() {
                             sentence.id
                           )
                         }
-                        className="opacity-0 group-hover:opacity-100 transition text-red-500 text-sm shrink-0"
+                        className="text-red-500 text-sm shrink-0 hover:underline"
                       >
                         삭제
                       </button>
