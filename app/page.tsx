@@ -24,25 +24,72 @@ export default function EnglishStudyApp() {
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [firstTryCount, setFirstTryCount] = useState(0);
 
-  const isActiveRef = useRef(false);       // 녹음 의도 여부
-  const transcriptRef = useRef('');        // 누적 인식 텍스트
+  const isActiveRef = useRef(false);
+  const transcriptRef = useRef('');
   const recognitionRef = useRef<any>(null);
   const restartTimerRef = useRef<any>(null);
-  const audioOk = useRef<HTMLAudioElement | null>(null);
-  const audioError = useRef<HTMLAudioElement | null>(null);
+  const audioOk = useRef<any>(null);
+  const audioError = useRef<any>(null);
 
- useEffect(() => {
-  const saved = localStorage.getItem('study_sentences');
-  if (saved) setSentences(JSON.parse(saved));
-  audioOk.current = new Audio('/sound_ok.mp3');
-  audioError.current = new Audio('/sound_error.mp3');
+  useEffect(() => {
+    const saved = localStorage.getItem('study_sentences');
+    if (saved) setSentences(JSON.parse(saved));
 
-  // 이 줄 추가
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+    const createBeep = (frequency: number) => {
+      return {
+        play: () => {
+          try {
+            const ctx = new AudioContext();
+            const oscillator = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            oscillator.frequency.value = frequency;
+            oscillator.type = 'sine';
+            gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+            oscillator.start(ctx.currentTime);
+            oscillator.stop(ctx.currentTime + 0.3);
+          } catch (e) {}
+        }
+      };
+    };
 
-  return () => { stopRecognition(); };
-}, []);
-  // ── 인식 인스턴스 완전 제거 ──────────────────────────────
+    audioOk.current = createBeep(880);    // 높은 음 = 정답
+    audioError.current = createBeep(220); // 낮은 음 = 오답
+
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+
+    return () => { stopRecognition(); };
+  }, []);
+
+  const saveSentences = (updated: Sentence[]) => {
+    setSentences(updated);
+    localStorage.setItem('study_sentences', JSON.stringify(updated));
+  };
+
+  const normalizeText = (text: string) =>
+    text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  const calculateSimilarity = (user: string, answer: string) => {
+    const userWords = normalizeText(user).split(' ');
+    const answerWords = normalizeText(answer).split(' ');
+    let matched = 0;
+    answerWords.forEach((w) => { if (userWords.includes(w)) matched++; });
+    return matched / answerWords.length;
+  };
+
+  const handleAddSentence = () => {
+    if (!inputEn.trim() || !inputKo.trim()) return;
+    saveSentences([...sentences, { id: Date.now(), en: inputEn.trim(), ko: inputKo.trim() }]);
+    setInputEn('');
+    setInputKo('');
+  };
+
+  const handleDeleteSentence = (id: number) => {
+    saveSentences(sentences.filter((s) => s.id !== id));
+  };
+
   const destroyRecognition = () => {
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current);
@@ -50,21 +97,25 @@ export default function EnglishStudyApp() {
     }
     if (recognitionRef.current) {
       const rec = recognitionRef.current;
-      recognitionRef.current = null;   // ← 먼저 null로 만들어 onend 재진입 차단
-      try { rec.onstart = null; rec.onresult = null; rec.onerror = null; rec.onend = null; rec.abort(); } catch (e) {}
+      recognitionRef.current = null;
+      try {
+        rec.onstart = null;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        rec.abort();
+      } catch (e) {}
     }
   };
 
-  // ── 의도적 종료 (제출 / 재시도 / 리셋) ─────────────────
   const stopRecognition = () => {
     isActiveRef.current = false;
     destroyRecognition();
     setIsRecording(false);
   };
 
-  // ── 새 인스턴스 생성 및 시작 (iOS Safari: 매번 new) ────
   const createAndStart = () => {
-    destroyRecognition();   // 혹시 남아있는 이전 인스턴스 제거
+    destroyRecognition();
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -74,7 +125,7 @@ export default function EnglishStudyApp() {
     recognitionRef.current = rec;
 
     rec.lang = 'en-US';
-    rec.continuous = false;        // iOS Safari: true 미지원
+    rec.continuous = false;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
 
@@ -95,22 +146,15 @@ export default function EnglishStudyApp() {
     rec.onerror = (event: any) => {
       if (event.error === 'aborted' || event.error === 'no-speech') return;
       console.error('STT error:', event.error);
-      // 심각한 에러만 중단, 나머지는 onend에서 재시작
     };
 
     rec.onend = () => {
-      // ✅ isActiveRef가 true면 → 사용자가 아직 말하는 중이므로 재시작
-      // ✅ isActiveRef가 false면 → 의도적 종료이므로 그냥 종료
       if (!isActiveRef.current) {
         setIsRecording(false);
         return;
       }
-      // iOS Safari는 continuous=false라 onend가 수시로 발생
-      // → 200ms 후 새 인스턴스로 재시작
       restartTimerRef.current = setTimeout(() => {
-        if (isActiveRef.current) {
-          createAndStart();
-        }
+        if (isActiveRef.current) createAndStart();
       }, 200);
     };
 
@@ -126,26 +170,22 @@ export default function EnglishStudyApp() {
     }
   };
 
-  // ── 녹음 시작 (버튼) ────────────────────────────────────
   const startListening = () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('음성 인식을 지원하지 않는 브라우저입니다. Safari 또는 Chrome을 사용해주세요.');
+      alert('음성 인식을 지원하지 않는 브라우저입니다. Chrome을 사용해주세요.');
       return;
     }
-
     transcriptRef.current = '';
     setRecognizedText('');
     setStatus('listening');
-    isActiveRef.current = true;   // ← 의도적 시작 표시
+    isActiveRef.current = true;
     createAndStart();
   };
 
-  // ── 제출 (버튼) ─────────────────────────────────────────
   const submitSpeaking = () => {
-    stopRecognition();   // isActiveRef=false → onend에서 재시작 안 함
-
+    stopRecognition();
     const transcript = transcriptRef.current;
     if (!transcript.trim()) {
       setStatus('fail');
@@ -155,25 +195,12 @@ export default function EnglishStudyApp() {
     checkAnswer(transcript);
   };
 
-  // ── 재시도 (버튼) ────────────────────────────────────────
   const handleRetry = () => {
-  stopRecognition();
-  transcriptRef.current = '';
-  setRecognizedText('');
-  setCurrentAttempt((prev) => prev + 1);
-  setStatus('idle');  // createAndStart() 호출 없이 idle로만 변경
-};
-
-  // ── 정답 판정 ────────────────────────────────────────────
-  const normalizeText = (text: string) =>
-    text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
-
-  const calculateSimilarity = (user: string, answer: string) => {
-    const userWords = normalizeText(user).split(' ');
-    const answerWords = normalizeText(answer).split(' ');
-    let matched = 0;
-    answerWords.forEach((w) => { if (userWords.includes(w)) matched++; });
-    return matched / answerWords.length;
+    stopRecognition();
+    transcriptRef.current = '';
+    setRecognizedText('');
+    setCurrentAttempt((prev) => prev + 1);
+    setStatus('idle');
   };
 
   const checkAnswer = (transcript: string) => {
@@ -183,11 +210,11 @@ export default function EnglishStudyApp() {
     if (isCorrect) {
       setStatus('success');
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
-      audioOk.current?.play().catch(() => {});
+      audioOk.current?.play();
       setTimeout(() => { moveNext(); }, 1500);
     } else {
       setStatus('fail');
-      audioError.current?.play().catch(() => {});
+      audioError.current?.play();
     }
   };
 
@@ -199,22 +226,6 @@ export default function EnglishStudyApp() {
     setStatus('idle');
     setCurrentAttempt(1);
     setCurrentIndex(next);
-  };
-
-  const saveSentences = (updated: Sentence[]) => {
-    setSentences(updated);
-    localStorage.setItem('study_sentences', JSON.stringify(updated));
-  };
-
-  const handleAddSentence = () => {
-    if (!inputEn.trim() || !inputKo.trim()) return;
-    saveSentences([...sentences, { id: Date.now(), en: inputEn.trim(), ko: inputKo.trim() }]);
-    setInputEn('');
-    setInputKo('');
-  };
-
-  const handleDeleteSentence = (id: number) => {
-    saveSentences(sentences.filter((s) => s.id !== id));
   };
 
   const startTest = () => {
@@ -266,9 +277,14 @@ export default function EnglishStudyApp() {
             {recognizedText}
           </div>
         )}
-        {status === 'idle' && (
+        {status === 'idle' && currentAttempt === 1 && (
           <button onClick={startListening} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
             발음 시작
+          </button>
+        )}
+        {status === 'idle' && currentAttempt > 1 && (
+          <button onClick={startListening} className="bg-orange-500 text-white px-6 py-4 rounded-xl font-bold w-full">
+            다시 발음하기
           </button>
         )}
         {status === 'listening' && (
@@ -276,29 +292,20 @@ export default function EnglishStudyApp() {
             제출하기
           </button>
         )}
-        {status === 'success' && <div className="mt-6 text-blue-500 text-2xl font-bold">정답!</div>}
+        {status === 'success' && (
+          <div className="mt-6 text-blue-500 text-2xl font-bold">정답!</div>
+        )}
         {status === 'fail' && (
-  <div className="mt-6">
-    <div className="mb-4">
-      <div className="text-sm text-gray-500">정답 (참고용)</div>
-      <div className="text-xl font-bold">{current.en}</div>
-    </div>
-    <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full mb-3">
-      다시 시도하기
-    </button>
-  </div>
-)}
-{status === 'idle' && currentAttempt > 1 && (
-  // 재시도 중일 때 발음 시작 버튼 색을 다르게 해서 구분
-  <button onClick={startListening} className="bg-orange-500 text-white px-6 py-4 rounded-xl font-bold w-full">
-    다시 발음하기
-  </button>
-)}
-{status === 'idle' && currentAttempt === 1 && (
-  <button onClick={startListening} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
-    발음 시작
-  </button>
-)}
+          <div className="mt-6">
+            <div className="mb-4">
+              <div className="text-sm text-gray-500">정답 (참고용)</div>
+              <div className="text-xl font-bold">{current.en}</div>
+            </div>
+            <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
+              다시 시도하기
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -308,9 +315,23 @@ export default function EnglishStudyApp() {
       <h1 className="text-3xl font-bold mb-6">영어 스피킹 학습</h1>
       <div className="mb-6">
         <h2 className="text-lg font-bold mb-2">새 문장 추가</h2>
-        <input type="text" placeholder="영어 문장" value={inputEn} onChange={(e) => setInputEn(e.target.value)} className="w-full border p-3 rounded-xl mb-2 bg-white text-black" />
-        <input type="text" placeholder="한글 뜻" value={inputKo} onChange={(e) => setInputKo(e.target.value)} className="w-full border p-3 rounded-xl mb-2 bg-white text-black" />
-        <button onClick={handleAddSentence} className="bg-green-500 text-white px-4 py-3 rounded-xl w-full font-bold">저장하기</button>
+        <input
+          type="text"
+          placeholder="영어 문장"
+          value={inputEn}
+          onChange={(e) => setInputEn(e.target.value)}
+          className="w-full border p-3 rounded-xl mb-2 bg-white text-black"
+        />
+        <input
+          type="text"
+          placeholder="한글 뜻"
+          value={inputKo}
+          onChange={(e) => setInputKo(e.target.value)}
+          className="w-full border p-3 rounded-xl mb-2 bg-white text-black"
+        />
+        <button onClick={handleAddSentence} className="bg-green-500 text-white px-4 py-3 rounded-xl w-full font-bold">
+          저장하기
+        </button>
       </div>
       <div className="mb-6">
         <div className="flex justify-between mb-3">
@@ -337,7 +358,9 @@ export default function EnglishStudyApp() {
           </div>
         </div>
       </div>
-      <button onClick={startTest} className="bg-blue-500 text-white px-6 py-4 rounded-xl w-full font-bold">테스트 시작</button>
+      <button onClick={startTest} className="bg-blue-500 text-white px-6 py-4 rounded-xl w-full font-bold">
+        테스트 시작
+      </button>
     </div>
   );
 }
