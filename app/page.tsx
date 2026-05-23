@@ -195,13 +195,13 @@ export default function EnglishStudyApp() {
     checkAnswer(transcript);
   };
 
-  const handleRetry = () => {
-    stopRecognition();
-    transcriptRef.current = '';
-    setRecognizedText('');
-    setCurrentAttempt((prev) => prev + 1);
-    setStatus('idle');
-  };
+const handleRetry = () => {
+  stopRecognition();
+  transcriptRef.current = '';
+  setRecognizedText('');
+  setCurrentAttempt((prev) => prev + 1);
+  startListening();
+};
 
   const checkAnswer = (transcript: string) => {
     const current = testQueue[currentIndex];
