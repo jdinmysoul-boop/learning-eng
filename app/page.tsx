@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-// 문장 타입 정의
 interface Sentence {
   en: string;
   ko: string;
@@ -13,23 +12,19 @@ export default function EnglishStudyApp() {
   const [inputEn, setInputEn] = useState('');
   const [inputKo, setInputKo] = useState('');
 
-  // 테스트 관련 상태
   const [isTesting, setIsTesting] = useState(false);
   const [testQueue, setTestQueue] = useState<Sentence[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [recognizedText, setRecognizedText] = useState('');
   const [status, setStatus] = useState<'idle' | 'listening' | 'success' | 'fail'>('idle');
   
-  // 결과 통계
   const [firstTryCount, setFirstTryCount] = useState(0);
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [isFinished, setIsFinished] = useState(false);
 
-  // Audio 객체 (Safari 정책을 위해 참조로 관리)
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
 
-  // 로컬 스토리지 데이터 로드 및 오디오 초기화
   useEffect(() => {
     const saved = localStorage.getItem('study_sentences');
     if (saved) setSentences(JSON.parse(saved));
@@ -38,7 +33,6 @@ export default function EnglishStudyApp() {
     audioError.current = new Audio('/sound_error.mp3');
   }, []);
 
-  // 문장 추가 로직
   const handleAddSentence = () => {
     if (!inputEn.trim() || !inputKo.trim()) return;
     const newSentences = [...sentences, { en: inputEn, ko: inputKo }];
@@ -48,12 +42,10 @@ export default function EnglishStudyApp() {
     setInputKo('');
   };
 
-  // 문자열 정제 함수 (비교용: 구두점 제거, 소문자화, 공백 정리)
   const normalizeText = (text: string) => {
     return text.replace(/[^a-zA-Z0-9\s]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   };
 
-  // 테스트 시작 (최대 50문제 랜덤 추출)
   const startTest = () => {
     if (sentences.length === 0) {
       alert('저장된 문장이 없습니다.');
@@ -72,9 +64,7 @@ export default function EnglishStudyApp() {
     setIsTesting(true);
   };
 
-  // 음성 인식 시작
   const startListening = () => {
-    // Safari(iOS) 지원을 위한 webkit 접두사 확인
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert('이 브라우저에서는 음성 인식을 지원하지 않습니다. 모바일 사파리 또는 크롬을 이용해주세요.');
@@ -97,28 +87,37 @@ export default function EnglishStudyApp() {
       checkAnswer(transcript);
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event: any) => {
       setStatus('idle');
-      alert('음성을 인식하지 못했습니다. 다시 시도해주세요.');
+      if (event.error === 'no-speech') {
+        alert('목소리가 감지되지 않았습니다. 다시 버튼을 누르고 발음해주세요.');
+      } else {
+        alert('음성 인식 오류: ' + event.error);
+      }
+    };
+
+    recognition.onend = () => {
+      setStatus((prev) => {
+        if (prev === 'listening') return 'idle';
+        return prev;
+      });
     };
 
     recognition.start();
   };
 
-  // 정답 확인 로직
   const checkAnswer = (transcript: string) => {
     const currentSentence = testQueue[currentIndex];
     const isCorrect = normalizeText(transcript) === normalizeText(currentSentence.en);
 
     if (isCorrect) {
       setStatus('success');
-      audioOk.current?.play().catch(() => {}); // Safari 자동재생 예외 방어
+      audioOk.current?.play().catch(() => {});
       
       if (currentAttempt === 1) {
         setFirstTryCount(prev => prev + 1);
       }
 
-      // 2초 후 다음 문제로 자동 이동
       setTimeout(() => {
         if (currentIndex + 1 < testQueue.length) {
           setCurrentIndex(prev => prev + 1);
@@ -136,17 +135,15 @@ export default function EnglishStudyApp() {
     }
   };
 
-  // 다시 시도 버튼 클릭
   const handleRetry = () => {
     setStatus('idle');
     setRecognizedText('');
     setCurrentAttempt(prev => prev + 1);
   };
 
-  // 1. 결과 화면
   if (isFinished) {
     return (
-      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-center">
+      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-center text-gray-900">
         <h2 className="text-2xl font-bold mb-4">테스트 완료!</h2>
         <p className="text-lg mb-6">
           총 {testQueue.length}문장 중 첫 시도에 <strong>{firstTryCount}</strong>개를 맞췄습니다.
@@ -167,26 +164,23 @@ export default function EnglishStudyApp() {
     );
   }
 
-  // 2. 테스트 진행 화면
   if (isTesting) {
     return (
-      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-center">
+      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-center text-gray-900">
         <div className="text-gray-500 mb-2">
           진행 상황: {currentIndex + 1} / {testQueue.length}
         </div>
         
-        <div className="text-xl font-bold mb-8 p-4 bg-gray-100 rounded">
+        <div className="text-xl font-bold mb-8 p-4 bg-gray-100 rounded text-gray-900">
           {testQueue[currentIndex].ko}
         </div>
 
-        {/* 인식된 텍스트 표시 영역 */}
         {recognizedText && (
-          <div className={`text-2xl font-bold mb-8 ${status === 'success' ? 'text-blue-600' : status === 'fail' ? 'text-gray-400' : 'text-black'}`}>
+          <div className={`text-2xl font-bold mb-8 ${status === 'success' ? 'text-blue-600' : status === 'fail' ? 'text-gray-400' : 'text-gray-900'}`}>
             {recognizedText}
           </div>
         )}
 
-        {/* 컨트롤 영역 */}
         {status === 'idle' && (
           <button 
             onClick={startListening}
@@ -220,9 +214,8 @@ export default function EnglishStudyApp() {
     );
   }
 
-  // 3. 메인 (단어장 관리) 화면
   return (
-    <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md">
+    <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-gray-900">
       <h1 className="text-2xl font-bold mb-6">영어 스피킹 학습</h1>
       
       <div className="mb-6">
@@ -232,14 +225,14 @@ export default function EnglishStudyApp() {
           placeholder="영어 문장" 
           value={inputEn}
           onChange={(e) => setInputEn(e.target.value)}
-          className="w-full border p-2 rounded mb-2"
+          className="w-full border p-2 rounded mb-2 text-gray-900 bg-white placeholder-gray-400"
         />
         <input 
           type="text" 
           placeholder="한글 뜻" 
           value={inputKo}
           onChange={(e) => setInputKo(e.target.value)}
-          className="w-full border p-2 rounded mb-2"
+          className="w-full border p-2 rounded mb-2 text-gray-900 bg-white placeholder-gray-400"
         />
         <button 
           onClick={handleAddSentence}
