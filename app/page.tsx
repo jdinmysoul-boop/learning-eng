@@ -25,22 +25,18 @@ export default function EnglishStudyApp() {
   const [firstTryCount, setFirstTryCount] = useState(0);
 
   const recognitionRef = useRef<any>(null);
-  const audioStreamRef = useRef<MediaStream | null>(null);
+  // ❌ audioStreamRef 완전 제거
   const transcriptRef = useRef('');
+  const finalTranscriptRef = useRef(''); // 확정된 최종 결과만 저장
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('study_sentences');
-    if (saved) {
-      setSentences(JSON.parse(saved));
-    }
+    if (saved) setSentences(JSON.parse(saved));
     audioOk.current = new Audio('/sound_ok.mp3');
     audioError.current = new Audio('/sound_error.mp3');
-
-    return () => {
-      forceKillRecognition();
-    };
+    return () => { forceKillRecognition(); };
   }, []);
 
   const saveSentences = (updated: Sentence[]) => {
@@ -48,23 +44,14 @@ export default function EnglishStudyApp() {
     localStorage.setItem('study_sentences', JSON.stringify(updated));
   };
 
-  const normalizeText = (text: string) => {
-    return text
-      .replace(/[^\w\s]/gi, '')
-      .toLowerCase()
-      .replace(/\s+/g, ' ')
-      .trim();
-  };
+  const normalizeText = (text: string) =>
+    text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
   const calculateSimilarity = (user: string, answer: string) => {
     const userWords = normalizeText(user).split(' ');
     const answerWords = normalizeText(answer).split(' ');
-
     let matched = 0;
-    answerWords.forEach((word) => {
-      if (userWords.includes(word)) matched++;
-    });
-
+    answerWords.forEach((word) => { if (userWords.includes(word)) matched++; });
     return matched / answerWords.length;
   };
 
@@ -77,15 +64,11 @@ export default function EnglishStudyApp() {
   };
 
   const handleDeleteSentence = (id: number) => {
-    const updated = sentences.filter((sentence) => sentence.id !== id);
-    saveSentences(updated);
+    saveSentences(sentences.filter((s) => s.id !== id));
   };
 
   const startTest = () => {
-    if (sentences.length === 0) {
-      alert('문장을 추가하세요.');
-      return;
-    }
+    if (sentences.length === 0) { alert('문장을 추가하세요.'); return; }
     const shuffled = [...sentences].sort(() => Math.random() - 0.5);
     setTestQueue(shuffled.slice(0, 50));
     setCurrentIndex(0);
@@ -99,11 +82,9 @@ export default function EnglishStudyApp() {
 
   const moveNext = () => {
     const next = currentIndex + 1;
-    if (next >= testQueue.length) {
-      setIsFinished(true);
-      return;
-    }
+    if (next >= testQueue.length) { setIsFinished(true); return; }
     transcriptRef.current = '';
+    finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
     setCurrentAttempt(1);
@@ -113,6 +94,7 @@ export default function EnglishStudyApp() {
   const resetToMain = () => {
     forceKillRecognition();
     transcriptRef.current = '';
+    finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
     setCurrentAttempt(1);
@@ -125,28 +107,19 @@ export default function EnglishStudyApp() {
   const checkAnswer = (transcript: string) => {
     const current = testQueue[currentIndex];
     if (!current) return;
-
     const similarity = calculateSimilarity(transcript, current.en);
-    const isCorrect = similarity >= 0.8;
-
-    if (isCorrect) {
+    if (similarity >= 0.8) {
       setStatus('success');
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
-      if (audioOk.current) {
-        audioOk.current.currentTime = 0;
-        audioOk.current.play().catch(() => {});
-      }
+      audioOk.current?.play().catch(() => {});
       setTimeout(() => { moveNext(); }, 1500);
     } else {
       setStatus('fail');
-      if (audioError.current) {
-        audioError.current.currentTime = 0;
-        audioError.current.play().catch(() => {});
-      }
+      audioError.current?.play().catch(() => {});
     }
   };
 
-  // iOS 사파리 하드웨어 자원 독점을 완전히 해제하기 위한 강제 소멸 함수
+  // ✅ getUserMedia 완전 제거 — recognition만 정리
   const forceKillRecognition = () => {
     if (recognitionRef.current) {
       try {
@@ -158,107 +131,114 @@ export default function EnglishStudyApp() {
       } catch (e) {}
       recognitionRef.current = null;
     }
-    if (audioStreamRef.current) {
-      try {
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
-      } catch (e) {}
-      audioStreamRef.current = null;
-    }
     setIsRecording(false);
   };
 
-  const startListening = async () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  const startListening = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('이 브라우저에서는 음성 인식을 지원하지 않습니다. 모바일 사파리 또는 크롬을 이용해주세요.');
+      alert('음성 인식을 지원하지 않는 브라우저입니다. Safari 또는 Chrome을 사용해주세요.');
       return;
     }
-
     if (isRecording) return;
 
-    // 실행 전 무조건 이전 마이크 자원 세션을 완벽히 초기화
+    // 이전 인스턴스 정리
     forceKillRecognition();
 
     transcriptRef.current = '';
+    finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('listening');
 
-    try {
-      // 주황색 불빛 및 하드웨어 세션 권한 스트림 확보
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStreamRef.current = stream;
+    // ✅ 매번 새 인스턴스 생성 (재사용 금지)
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
 
-      const recognition = new SpeechRecognition();
-      recognitionRef.current = recognition;
+    recognition.lang = 'en-US';
+    recognition.continuous = true;   // ✅ true로 변경 — 자동 종료 방지
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
 
-      recognition.lang = 'en-US';
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
+    recognition.onstart = () => {
+      setIsRecording(true);
+    };
 
-      recognition.onstart = () => {
-        setIsRecording(true);
-      };
+    recognition.onresult = (event: any) => {
+      let interim = '';
+      let final = '';
 
-      recognition.onresult = (event: any) => {
-        let transcript = '';
-        for (let i = 0; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript + ' ';
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          final += result[0].transcript + ' ';
+        } else {
+          interim += result[0].transcript + ' ';
         }
-        transcript = transcript.trim();
-        transcriptRef.current = transcript;
-        setRecognizedText(transcript);
-      };
+      }
 
-      recognition.onerror = (event: any) => {
-        console.error('STT Error:', event.error);
-        if (event.error !== 'aborted') {
-          setStatus('fail');
-        }
+      // 확정 결과 누적, 화면엔 확정+임시 모두 표시
+      if (final) finalTranscriptRef.current = final.trim();
+      const display = (finalTranscriptRef.current + ' ' + interim).trim();
+      transcriptRef.current = display;
+      setRecognizedText(display);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('STT Error:', event.error);
+      // 'no-speech'는 무시, 나머지만 실패 처리
+      if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        setStatus('fail');
         forceKillRecognition();
-      };
+      }
+    };
 
-      recognition.onend = () => {
+    recognition.onend = () => {
+      // ✅ continuous=true인데 onend가 발생하면 자동 재시작 (iOS Safari 대응)
+      if (recognitionRef.current && isRecording) {
+        try { recognitionRef.current.start(); } catch (e) {}
+      } else {
         setIsRecording(false);
-      };
+      }
+    };
 
+    try {
       recognition.start();
-    } catch (error) {
-      console.error(error);
+    } catch (e) {
+      console.error(e);
       setStatus('fail');
       forceKillRecognition();
     }
   };
 
   const submitSpeaking = () => {
+    // ✅ stop() 호출 → onend에서 isRecording=false 처리
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
     }
-
-    // 마이크 하드웨어 트랙 강제 즉시 종료 (사파리 주황색 불빛 해제용)
-    if (audioStreamRef.current) {
-      try { audioStreamRef.current.getTracks().forEach(track => track.stop()); } catch (e) {}
-    }
-
+    // onend가 비동기로 오므로 ref에서 즉시 읽음
+    recognitionRef.current = null; // onend 재시작 방지
     setIsRecording(false);
-    const transcript = transcriptRef.current;
 
+    const transcript = transcriptRef.current;
     if (!transcript.trim()) {
       setStatus('fail');
       setRecognizedText('음성을 인식하지 못했습니다.');
       return;
     }
-
     checkAnswer(transcript);
   };
 
   const handleRetry = () => {
     forceKillRecognition();
     transcriptRef.current = '';
+    finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
     setCurrentAttempt((prev) => prev + 1);
   };
+
+  // --- UI (변경 없음) ---
 
   if (isFinished) {
     return (
@@ -274,14 +254,25 @@ export default function EnglishStudyApp() {
   if (isTesting) {
     const current = testQueue[currentIndex];
     if (!current) return null;
-
     return (
       <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black text-center">
         <div className="mb-4 text-gray-500">{currentIndex + 1} / {testQueue.length}</div>
         <div className="bg-gray-100 p-6 rounded-xl text-2xl font-bold mb-8">{current.ko}</div>
-        {recognizedText && <div className={`mb-6 text-xl font-bold break-words ${status === 'success' ? 'text-blue-600' : 'text-black'}`}>{recognizedText}</div>}
-        {status === 'idle' && <button onClick={startListening} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">발음 시작</button>}
-        {status === 'listening' && <button onClick={submitSpeaking} className="bg-green-500 text-white px-6 py-4 rounded-xl font-bold w-full animate-pulse">제출하기</button>}
+        {recognizedText && (
+          <div className={`mb-6 text-xl font-bold break-words ${status === 'success' ? 'text-blue-600' : 'text-black'}`}>
+            {recognizedText}
+          </div>
+        )}
+        {status === 'idle' && (
+          <button onClick={startListening} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
+            발음 시작
+          </button>
+        )}
+        {status === 'listening' && (
+          <button onClick={submitSpeaking} className="bg-green-500 text-white px-6 py-4 rounded-xl font-bold w-full animate-pulse">
+            제출하기
+          </button>
+        )}
         {status === 'success' && <div className="mt-6 text-blue-500 text-2xl font-bold">정답!</div>}
         {status === 'fail' && (
           <div className="mt-6">
@@ -289,7 +280,9 @@ export default function EnglishStudyApp() {
               <div className="text-sm text-gray-500">정답 (참고용)</div>
               <div className="text-xl font-bold">{current.en}</div>
             </div>
-            <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">다시 시도하기</button>
+            <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
+              다시 시도하기
+            </button>
           </div>
         )}
       </div>
