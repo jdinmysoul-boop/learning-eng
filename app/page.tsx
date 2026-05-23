@@ -8,7 +8,7 @@ interface Sentence {
   ko: string;
 }
 
-type Status = 'idle' | 'listening' | 'success' | 'fail';
+type Status = 'idle' | 'recording' | 'processing' | 'success' | 'fail';
 
 export default function EnglishStudyApp() {
   const [sentences, setSentences] = useState<Sentence[]>([]);
@@ -19,15 +19,12 @@ export default function EnglishStudyApp() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [recognizedText, setRecognizedText] = useState('');
   const [status, setStatus] = useState<Status>('idle');
-  const [isRecording, setIsRecording] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [firstTryCount, setFirstTryCount] = useState(0);
 
-  const isActiveRef = useRef(false);
-  const transcriptRef = useRef('');
-  const recognitionRef = useRef<any>(null);
-  const restartTimerRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const audioOk = useRef<any>(null);
   const audioError = useRef<any>(null);
 
@@ -35,32 +32,28 @@ export default function EnglishStudyApp() {
     const saved = localStorage.getItem('study_sentences');
     if (saved) setSentences(JSON.parse(saved));
 
-    const createBeep = (frequency: number) => {
-      return {
-        play: () => {
-          try {
-            const ctx = new AudioContext();
-            const oscillator = ctx.createOscillator();
-            const gainNode = ctx.createGain();
-            oscillator.connect(gainNode);
-            gainNode.connect(ctx.destination);
-            oscillator.frequency.value = frequency;
-            oscillator.type = 'sine';
-            gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-            oscillator.start(ctx.currentTime);
-            oscillator.stop(ctx.currentTime + 0.3);
-          } catch (e) {}
-        }
-      };
-    };
+    const createBeep = (frequency: number) => ({
+      play: () => {
+        try {
+          const ctx = new AudioContext();
+          const oscillator = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          oscillator.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          oscillator.frequency.value = frequency;
+          oscillator.type = 'sine';
+          gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          oscillator.start(ctx.currentTime);
+          oscillator.stop(ctx.currentTime + 0.3);
+        } catch (e) {}
+      }
+    });
 
-    audioOk.current = createBeep(880);    // 높은 음 = 정답
-    audioError.current = createBeep(220); // 낮은 음 = 오답
+    audioOk.current = createBeep(880);
+    audioError.current = createBeep(220);
 
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
-
-    return () => { stopRecognition(); };
   }, []);
 
   const saveSentences = (updated: Sentence[]) => {
@@ -90,127 +83,96 @@ export default function EnglishStudyApp() {
     saveSentences(sentences.filter((s) => s.id !== id));
   };
 
-  const destroyRecognition = () => {
-    if (restartTimerRef.current) {
-      clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = null;
-    }
-    if (recognitionRef.current) {
-      const rec = recognitionRef.current;
-      recognitionRef.current = null;
-      try {
-        rec.onstart = null;
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
-        rec.abort();
-      } catch (e) {}
+  // ── 녹음 시작 ────────────────────────────────────────────
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.start();
+      setStatus('recording');
+    } catch (e) {
+      alert('마이크 접근 권한이 필요합니다.');
     }
   };
 
-  const stopRecognition = () => {
-    isActiveRef.current = false;
-    destroyRecognition();
-    setIsRecording(false);
+  // ── 녹음 중단 후 Groq API 전송 ──────────────────────────
+  const stopAndSubmit = () => {
+    const mediaRecorder = mediaRecorderRef.current;
+    if (!mediaRecorder) return;
+
+    setStatus('processing');
+
+    mediaRecorder.onstop = async () => {
+      // 마이크 트랙 해제
+      mediaRecorder.stream.getTracks().forEach((t) => t.stop());
+
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      await sendToGroq(audioBlob);
+    };
+
+    mediaRecorder.stop();
   };
 
-  const createAndStart = () => {
-    destroyRecognition();
+  // ── Groq Whisper API 호출 ────────────────────────────────
+  const sendToGroq = async (audioBlob: Blob) => {
+    try {
+      const formData = new FormData();
+      // ✅ 파일명에 확장자 필수 (Groq API 요구사항)
+      formData.append('file', audioBlob, 'audio.webm');
+      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('language', 'en');
+      formData.append('response_format', 'json');
 
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+      const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}`,
+        },
+        body: formData,
+      });
 
-    const rec = new SpeechRecognition();
-    recognitionRef.current = rec;
-
-    rec.lang = 'en-US';
-    rec.continuous = false;
-    rec.interimResults = true;
-    rec.maxAlternatives = 1;
-
-    rec.onstart = () => {
-      setIsRecording(true);
-    };
-
-    rec.onresult = (event: any) => {
-      let text = '';
-      for (let i = 0; i < event.results.length; i++) {
-        text += event.results[i][0].transcript + ' ';
-      }
-      text = text.trim();
-      transcriptRef.current = text;
-      setRecognizedText(text);
-    };
-
-    rec.onerror = (event: any) => {
-      if (event.error === 'aborted' || event.error === 'no-speech') return;
-      console.error('STT error:', event.error);
-    };
-
-    rec.onend = () => {
-      if (!isActiveRef.current) {
-        setIsRecording(false);
+      if (!response.ok) {
+        const err = await response.text();
+        console.error('Groq API error:', err);
+        setStatus('fail');
+        setRecognizedText('API 오류가 발생했습니다.');
         return;
       }
-      restartTimerRef.current = setTimeout(() => {
-        if (isActiveRef.current) createAndStart();
-      }, 200);
-    };
 
-    try {
-      rec.start();
-    } catch (e) {
-      console.error('start error:', e);
-      if (isActiveRef.current) {
-        restartTimerRef.current = setTimeout(() => {
-          if (isActiveRef.current) createAndStart();
-        }, 300);
+      const data = await response.json();
+      const transcript = data.text?.trim() ?? '';
+
+      if (!transcript) {
+        setStatus('fail');
+        setRecognizedText('음성을 인식하지 못했습니다.');
+        return;
       }
-    }
-  };
 
-  const startListening = () => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('음성 인식을 지원하지 않는 브라우저입니다. Chrome을 사용해주세요.');
-      return;
-    }
-    transcriptRef.current = '';
-    setRecognizedText('');
-    setStatus('listening');
-    isActiveRef.current = true;
-    createAndStart();
-  };
-
-  const submitSpeaking = () => {
-    stopRecognition();
-    const transcript = transcriptRef.current;
-    if (!transcript.trim()) {
+      setRecognizedText(transcript);
+      checkAnswer(transcript);
+    } catch (e) {
+      console.error(e);
       setStatus('fail');
-      setRecognizedText('음성을 인식하지 못했습니다.');
-      return;
+      setRecognizedText('네트워크 오류가 발생했습니다.');
     }
-    checkAnswer(transcript);
   };
 
-const handleRetry = () => {
-  stopRecognition();
-  transcriptRef.current = '';
-  setRecognizedText('');
-  setCurrentAttempt((prev) => prev + 1);
-  startListening();
-};
-
+  // ── 정답 판정 ────────────────────────────────────────────
   const checkAnswer = (transcript: string) => {
     const current = testQueue[currentIndex];
     if (!current) return;
-    const normalized_transcript = normalizeText(transcript);
-const normalized_answer = normalizeText(current.en);
-const exactMatch = normalized_transcript === normalized_answer;
-const similarityMatch = calculateSimilarity(transcript, current.en) >= 0.9;
-const isCorrect = exactMatch || similarityMatch;
+
+    const exactMatch = normalizeText(transcript) === normalizeText(current.en);
+    const similarityMatch = calculateSimilarity(transcript, current.en) >= 0.9;
+    const isCorrect = exactMatch || similarityMatch;
+
     if (isCorrect) {
       setStatus('success');
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
@@ -225,11 +187,16 @@ const isCorrect = exactMatch || similarityMatch;
   const moveNext = () => {
     const next = currentIndex + 1;
     if (next >= testQueue.length) { setIsFinished(true); return; }
-    transcriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
     setCurrentAttempt(1);
     setCurrentIndex(next);
+  };
+
+  const handleRetry = () => {
+    setRecognizedText('');
+    setCurrentAttempt((prev) => prev + 1);
+    startRecording();
   };
 
   const startTest = () => {
@@ -246,8 +213,8 @@ const isCorrect = exactMatch || similarityMatch;
   };
 
   const resetToMain = () => {
-    stopRecognition();
-    transcriptRef.current = '';
+    mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
+    mediaRecorderRef.current = null;
     setRecognizedText('');
     setStatus('idle');
     setCurrentAttempt(1);
@@ -276,24 +243,26 @@ const isCorrect = exactMatch || similarityMatch;
       <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black text-center">
         <div className="mb-4 text-gray-500">{currentIndex + 1} / {testQueue.length}</div>
         <div className="bg-gray-100 p-6 rounded-xl text-2xl font-bold mb-8">{current.ko}</div>
+
         {recognizedText && (
           <div className={`mb-6 text-xl font-bold break-words ${status === 'success' ? 'text-blue-600' : 'text-black'}`}>
             {recognizedText}
           </div>
         )}
-        {status === 'idle' && currentAttempt === 1 && (
-          <button onClick={startListening} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
+
+        {status === 'idle' && (
+          <button onClick={startRecording} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
             발음 시작
           </button>
         )}
-        {status === 'idle' && currentAttempt > 1 && (
-          <button onClick={startListening} className="bg-orange-500 text-white px-6 py-4 rounded-xl font-bold w-full">
-            다시 발음하기
+        {status === 'recording' && (
+          <button onClick={stopAndSubmit} className="bg-green-500 text-white px-6 py-4 rounded-xl font-bold w-full animate-pulse">
+            제출하기 🎙️
           </button>
         )}
-        {status === 'listening' && (
-          <button onClick={submitSpeaking} className="bg-green-500 text-white px-6 py-4 rounded-xl font-bold w-full animate-pulse">
-            제출하기
+        {status === 'processing' && (
+          <button disabled className="bg-gray-400 text-white px-6 py-4 rounded-xl font-bold w-full">
+            인식 중...
           </button>
         )}
         {status === 'success' && (
