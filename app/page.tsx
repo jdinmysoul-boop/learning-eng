@@ -23,7 +23,6 @@ export default function EnglishStudyApp() {
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [firstTryCount, setFirstTryCount] = useState(0);
 
-  // 녹음 관련 Ref 및 상태
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioOk = useRef<HTMLAudioElement | null>(null);
@@ -162,14 +161,23 @@ export default function EnglishStudyApp() {
     }
   };
 
-  // 1. 녹음 시작 기능 (외부 API용 오디오 캡처)
   const startListening = async () => {
     audioChunksRef.current = [];
     setRecognizedText('');
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      
+      // 브라우저별 지원 포맷 확인 연동
+      let options = { mimeType: 'audio/mp4' };
+      if (!MediaRecorder.isTypeSupported('audio/mp4')) {
+        options = { mimeType: 'audio/webm' };
+      }
+      if (!MediaRecorder.isTypeSupported('audio/webm')) {
+        options = { mimeType: '' };
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
@@ -179,7 +187,6 @@ export default function EnglishStudyApp() {
       };
 
       mediaRecorder.onstop = async () => {
-        // 녹음이 끝나면 즉시 오디오 트랙을 모두 종료하여 iOS 주황색 불빛 해제
         stream.getTracks().forEach(track => track.stop());
         await uploadAudioAndTranscribe();
       };
@@ -192,15 +199,13 @@ export default function EnglishStudyApp() {
     }
   };
 
-  // 2. 녹음 종료 및 제출 기능
   const submitSpeaking = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      setStatus('processing'); // 분석 중 상태 진입
+      setStatus('processing');
       mediaRecorderRef.current.stop();
     }
   };
 
-  // 3. OpenAI Whisper API 라우트로 오디오 전송 및 결과 처리
   const uploadAudioAndTranscribe = async () => {
     if (audioChunksRef.current.length === 0) {
       setStatus('fail');
@@ -208,7 +213,9 @@ export default function EnglishStudyApp() {
       return;
     }
 
-    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+    const currentMime = mediaRecorderRef.current?.mimeType || 'audio/mp4';
+    const audioBlob = new Blob(audioChunksRef.current, { type: currentMime });
+    
     const formData = new FormData();
     formData.append('file', audioBlob);
 
@@ -219,7 +226,8 @@ export default function EnglishStudyApp() {
       });
 
       if (!response.ok) {
-        throw new Error('서버 STT 처리 실패');
+        const errJson = await response.json();
+        throw new Error(errJson.error || '서버 STT 처리 실패');
       }
 
       const data = await response.json();
@@ -234,10 +242,10 @@ export default function EnglishStudyApp() {
       }
 
       checkAnswer(textResult);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       setStatus('fail');
-      setRecognizedText('API 인식 오류가 발생했습니다.');
+      setRecognizedText(error.message || 'API 인식 오류가 발생했습니다.');
     }
   };
 

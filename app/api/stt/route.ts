@@ -14,11 +14,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '오디오 파일이 없습니다.' }, { status: 400 });
     }
 
-    // OpenAI Whisper API 규격에 맞게 폼데이터 재구성
+    // 전송된 오디오 바이너리를 Buffer로 변환
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // OpenAI Whisper API 규격에 완벽히 부합하도록 FormData 재구성
     const openAiFormData = new FormData();
-    openAiFormData.append('file', file, 'audio.wav');
+    
+    // 유저의 파일 원본 포맷(mp3 등)을 유지하기 위해 블롭 데이터를 기반으로 파일 객체 생성
+    const audioFile = new File([buffer], 'audio.mp3', { type: 'audio/mp3' });
+    openAiFormData.append('file', audioFile);
     openAiFormData.append('model', 'whisper-1');
-    openAiFormData.append('language', 'en'); // 영어 인식 고정
+    openAiFormData.append('language', 'en');
 
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -30,14 +37,14 @@ export async function POST(request: Request) {
 
     if (!response.ok) {
       const errorData = await response.json();
-      console.error('OpenAI Error:', errorData);
-      return NextResponse.json({ error: 'OpenAI API 처리 중 오류가 발생했습니다.' }, { status: response.status });
+      console.error('OpenAI API Error:', errorData);
+      return NextResponse.json({ error: errorData.error?.message || 'OpenAI 통신 실패' }, { status: response.status });
     }
 
     const data = await response.json();
     return NextResponse.json({ text: data.text });
   } catch (error: any) {
-    console.error('STT Route Error:', error);
+    console.error('STT Route Runtime Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
