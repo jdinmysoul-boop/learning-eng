@@ -154,12 +154,14 @@ export default function EnglishStudyApp() {
 
   // ── 재시도 (버튼) ────────────────────────────────────────
   const handleRetry = () => {
-    stopRecognition();
-    transcriptRef.current = '';
-    setRecognizedText('');
-    setStatus('idle');
-    setCurrentAttempt((prev) => prev + 1);
-  };
+  stopRecognition();
+  transcriptRef.current = '';
+  setRecognizedText('');
+  setStatus('listening');
+  setCurrentAttempt((prev) => prev + 1);
+  isActiveRef.current = true;
+  createAndStart();
+};
 
   // ── 정답 판정 ────────────────────────────────────────────
   const normalizeText = (text: string) =>
