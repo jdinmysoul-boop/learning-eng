@@ -206,7 +206,11 @@ export default function EnglishStudyApp() {
   const checkAnswer = (transcript: string) => {
     const current = testQueue[currentIndex];
     if (!current) return;
-    const isCorrect = calculateSimilarity(transcript, current.en) >= 0.8;
+    const normalized_transcript = normalizeText(transcript);
+const normalized_answer = normalizeText(current.en);
+const exactMatch = normalized_transcript === normalized_answer;
+const similarityMatch = calculateSimilarity(transcript, current.en) >= 0.9;
+const isCorrect = exactMatch || similarityMatch;
     if (isCorrect) {
       setStatus('success');
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
