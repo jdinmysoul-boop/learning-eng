@@ -76,24 +76,9 @@ export default function Home() {
     );
 
     return () => {
-      cleanupRecognition();
+      destroyRecognition();
     };
   }, []);
-
-  const cleanupRecognition = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.onstart = null;
-        recognitionRef.current.onresult = null;
-        recognitionRef.current.onerror = null;
-        recognitionRef.current.onend = null;
-
-        recognitionRef.current.abort();
-
-        recognitionRef.current = null;
-      } catch {}
-    }
-  };
 
   const saveSentences = (
     updated: Sentence[]
@@ -112,6 +97,21 @@ export default function Home() {
       .toLowerCase()
       .replace(/\s+/g, ' ')
       .trim();
+  };
+
+  const destroyRecognition = () => {
+    if (!recognitionRef.current) return;
+
+    try {
+      recognitionRef.current.onstart = null;
+      recognitionRef.current.onresult = null;
+      recognitionRef.current.onerror = null;
+      recognitionRef.current.onend = null;
+
+      recognitionRef.current.stop();
+    } catch {}
+
+    recognitionRef.current = null;
   };
 
   const handleAddSentence = () => {
@@ -174,26 +174,24 @@ export default function Home() {
   };
 
   const moveNext = () => {
-    setCurrentIndex((prev) => {
-      const next = prev + 1;
+    const nextIndex = currentIndex + 1;
 
-      if (next >= testQueue.length) {
-        setIsFinished(true);
-        return prev;
-      }
+    if (nextIndex >= testQueue.length) {
+      setIsFinished(true);
+      return;
+    }
 
-      setRecognizedText('');
+    setCurrentIndex(nextIndex);
 
-      setStatus('idle');
+    setRecognizedText('');
 
-      setCurrentAttempt(1);
+    setStatus('idle');
 
-      return next;
-    });
+    setCurrentAttempt(1);
   };
 
   const resetToMain = () => {
-    cleanupRecognition();
+    destroyRecognition();
 
     setIsTesting(false);
 
@@ -254,17 +252,17 @@ export default function Home() {
 
     if (!SpeechRecognition) {
       alert(
-        '크롬 최신 브라우저를 사용해주세요.'
+        '크롬 브라우저를 사용해주세요.'
       );
       return;
     }
 
     if (isRecording) return;
 
-    cleanupRecognition();
+    destroyRecognition();
 
     await new Promise((resolve) =>
-      setTimeout(resolve, 300)
+      setTimeout(resolve, 250)
     );
 
     const recognition = new SpeechRecognition();
@@ -279,9 +277,9 @@ export default function Home() {
 
     recognition.maxAlternatives = 1;
 
-    let finalTranscript = '';
+    let transcript = '';
 
-    let handled = false;
+    let completed = false;
 
     recognition.onstart = () => {
       setIsRecording(true);
@@ -292,18 +290,24 @@ export default function Home() {
     };
 
     recognition.onresult = (event: any) => {
-      finalTranscript =
+      transcript =
         event.results[0][0].transcript;
 
-      setRecognizedText(finalTranscript);
+      setRecognizedText(transcript);
     };
 
     recognition.onerror = (event: any) => {
-      if (handled) return;
+      if (completed) return;
 
-      handled = true;
+      completed = true;
 
       setIsRecording(false);
+
+      // abort는 무시
+      if (event.error === 'aborted') {
+        destroyRecognition();
+        return;
+      }
 
       setStatus('fail');
 
@@ -323,18 +327,18 @@ export default function Home() {
         );
       }
 
-      cleanupRecognition();
+      destroyRecognition();
     };
 
     recognition.onend = () => {
-      if (handled) return;
+      if (completed) return;
 
-      handled = true;
+      completed = true;
 
       setIsRecording(false);
 
-      if (finalTranscript.trim()) {
-        checkAnswer(finalTranscript);
+      if (transcript.trim()) {
+        checkAnswer(transcript);
       } else {
         setStatus('fail');
 
@@ -343,7 +347,7 @@ export default function Home() {
         );
       }
 
-      cleanupRecognition();
+      destroyRecognition();
     };
 
     try {
@@ -355,7 +359,7 @@ export default function Home() {
 
       setStatus('fail');
 
-      cleanupRecognition();
+      destroyRecognition();
     }
   };
 
@@ -367,12 +371,24 @@ export default function Home() {
     } catch {}
   };
 
-  const handleRetry = () => {
+  const handleRetry = async () => {
+    destroyRecognition();
+
     setRecognizedText('');
 
     setStatus('idle');
 
+    setIsRecording(false);
+
     setCurrentAttempt((prev) => prev + 1);
+
+    // recognition release 대기
+    await new Promise((resolve) =>
+      setTimeout(resolve, 300)
+    );
+
+    // 자동 재시작
+    startListening();
   };
 
   if (isFinished) {
@@ -476,7 +492,7 @@ export default function Home() {
               onClick={handleRetry}
               className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-bold w-full transition"
             >
-              다시 시도
+              다시 시도하기
             </button>
           </div>
         )}
