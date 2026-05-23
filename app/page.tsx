@@ -33,7 +33,6 @@ export default function EnglishStudyApp() {
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
 
-  // 컴포넌트 마운트 시 오디오 초기화 및 브라우저 단 1회 SpeechRecognition 인스턴스 생성
   useEffect(() => {
     const saved = localStorage.getItem('study_sentences');
     if (saved) {
@@ -42,16 +41,6 @@ export default function EnglishStudyApp() {
 
     audioOk.current = new Audio('/sound_ok.mp3');
     audioError.current = new Audio('/sound_error.mp3');
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'en-US';
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
-      recognitionRef.current = recognition;
-    }
 
     return () => {
       if (recognitionRef.current) {
@@ -146,12 +135,7 @@ export default function EnglishStudyApp() {
   };
 
   const resetToMain = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (e) {}
-    }
-
+    cleanupRecognition();
     transcriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
@@ -192,22 +176,46 @@ export default function EnglishStudyApp() {
     }
   };
 
+  // iOS 오디오 세션 반환을 위한 인스턴스 완전 파괴 함수
+  const cleanupRecognition = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onstart = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.abort();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
+  };
+
   const startListening = () => {
-    if (!recognitionRef.current) {
-      alert('음성 인식 API를 사용할 수 없는 브라우저이거나 초기화되지 않았습니다.');
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('이 브라우저에서는 음성 인식을 지원하지 않습니다. 모바일 사파리 또는 크롬을 이용해주세요.');
       return;
     }
 
     if (isRecording) return;
+
+    // 1. 기존에 남아있을 수 있는 인스턴스 자원을 완전히 해제 (iOS 마이크 락 해제)
+    cleanupRecognition();
 
     transcriptRef.current = '';
     setRecognizedText('');
     setStatus('listening');
     setIsRecording(true);
 
-    const recognition = recognitionRef.current;
+    // 2. 새로운 인스턴스를 생성하여 마이크 스트림을 새로 획득
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
 
-    // 기존 바인딩된 이벤트 핸들러 초기화 및 재등록
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
     recognition.onstart = () => {
       setIsRecording(true);
     };
@@ -239,11 +247,8 @@ export default function EnglishStudyApp() {
       recognition.start();
     } catch (error) {
       console.error('Start error:', error);
-      // 이미 구동 중인 에러 발생 시 강제 중지 후 재구동 처리
-      try {
-        recognition.abort();
-        setTimeout(() => recognition.start(), 100);
-      } catch (e) {}
+      setIsRecording(false);
+      cleanupRecognition();
     }
   };
 
@@ -268,11 +273,7 @@ export default function EnglishStudyApp() {
   };
 
   const handleRetry = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (e) {}
-    }
+    cleanupRecognition();
     transcriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
