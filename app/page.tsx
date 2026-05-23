@@ -76,13 +76,24 @@ export default function Home() {
     );
 
     return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch {}
-      }
+      cleanupRecognition();
     };
   }, []);
+
+  const cleanupRecognition = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onstart = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+
+        recognitionRef.current.abort();
+
+        recognitionRef.current = null;
+      } catch {}
+    }
+  };
 
   const saveSentences = (
     updated: Sentence[]
@@ -192,6 +203,9 @@ export default function Home() {
 
     const answer = normalizeText(current.en);
 
+    console.log('USER:', user);
+    console.log('ANSWER:', answer);
+
     const isCorrect = user === answer;
 
     if (isCorrect) {
@@ -207,7 +221,7 @@ export default function Home() {
 
       setTimeout(() => {
         moveNext();
-      }, 1500);
+      }, 1200);
     } else {
       setStatus('fail');
 
@@ -217,10 +231,11 @@ export default function Home() {
     }
   };
 
-  const startListening = () => {
+  const startListening = async () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      (window as any)
+        .webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       alert(
@@ -229,20 +244,16 @@ export default function Home() {
       return;
     }
 
+    // 이미 녹음중이면 무시
+    if (isRecording) return;
+
     // 이전 recognition 완전 제거
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.onresult =
-          null;
+    cleanupRecognition();
 
-        recognitionRef.current.onend = null;
-
-        recognitionRef.current.onerror =
-          null;
-
-        recognitionRef.current.abort();
-      } catch {}
-    }
+    // Chrome recognition release 대기
+    await new Promise((resolve) =>
+      setTimeout(resolve, 300)
+    );
 
     const recognition = new SpeechRecognition();
 
@@ -258,9 +269,11 @@ export default function Home() {
 
     let finalTranscript = '';
 
-    let finished = false;
+    let handled = false;
 
     recognition.onstart = () => {
+      console.log('LISTEN START');
+
       setIsRecording(true);
 
       setStatus('listening');
@@ -269,16 +282,25 @@ export default function Home() {
     };
 
     recognition.onresult = (event: any) => {
+      console.log('RESULT EVENT');
+
       finalTranscript =
         event.results[0][0].transcript;
+
+      console.log(
+        'TRANSCRIPT:',
+        finalTranscript
+      );
 
       setRecognizedText(finalTranscript);
     };
 
     recognition.onerror = (event: any) => {
-      if (finished) return;
+      console.log('ERROR EVENT', event);
 
-      finished = true;
+      if (handled) return;
+
+      handled = true;
 
       setIsRecording(false);
 
@@ -288,17 +310,27 @@ export default function Home() {
         setRecognizedText(
           '음성이 감지되지 않았습니다.'
         );
+      } else if (
+        event.error === 'not-allowed'
+      ) {
+        setRecognizedText(
+          '마이크 권한이 차단되었습니다.'
+        );
       } else {
         setRecognizedText(
           `오류: ${event.error}`
         );
       }
+
+      cleanupRecognition();
     };
 
     recognition.onend = () => {
-      if (finished) return;
+      console.log('LISTEN END');
 
-      finished = true;
+      if (handled) return;
+
+      handled = true;
 
       setIsRecording(false);
 
@@ -311,6 +343,8 @@ export default function Home() {
           '음성을 인식하지 못했습니다.'
         );
       }
+
+      cleanupRecognition();
     };
 
     try {
@@ -321,15 +355,17 @@ export default function Home() {
       setIsRecording(false);
 
       setStatus('fail');
+
+      cleanupRecognition();
     }
   };
 
   const stopListening = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-    }
+    if (!recognitionRef.current) return;
+
+    try {
+      recognitionRef.current.stop();
+    } catch {}
   };
 
   const handleRetry = () => {
@@ -342,7 +378,7 @@ export default function Home() {
 
   if (isFinished) {
     return (
-      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-black text-center">
+      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black text-center">
         <h1 className="text-3xl font-bold mb-4">
           테스트 완료
         </h1>
@@ -357,7 +393,7 @@ export default function Home() {
 
         <button
           onClick={startTest}
-          className="bg-blue-500 text-white px-6 py-3 rounded-lg w-full font-bold"
+          className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-xl w-full font-bold transition"
         >
           다시 테스트
         </button>
@@ -381,13 +417,13 @@ export default function Home() {
     if (!current) return null;
 
     return (
-      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-black text-center">
+      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black text-center">
         <div className="mb-4 text-gray-500">
           {currentIndex + 1} /{' '}
           {testQueue.length}
         </div>
 
-        <div className="bg-gray-100 p-6 rounded-lg text-2xl font-bold mb-8">
+        <div className="bg-gray-100 p-6 rounded-xl text-2xl font-bold mb-8">
           {current.ko}
         </div>
 
@@ -408,14 +444,14 @@ export default function Home() {
         {!isRecording ? (
           <button
             onClick={startListening}
-            className="bg-blue-500 text-white px-6 py-3 rounded-lg font-bold w-full"
+            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-4 rounded-xl font-bold w-full transition"
           >
             발음 시작
           </button>
         ) : (
           <button
             onClick={stopListening}
-            className="bg-red-500 text-white px-6 py-3 rounded-lg font-bold w-full"
+            className="bg-red-500 hover:bg-red-600 text-white px-6 py-4 rounded-xl font-bold w-full transition animate-pulse"
           >
             녹음 종료
           </button>
@@ -441,7 +477,7 @@ export default function Home() {
 
             <button
               onClick={handleRetry}
-              className="bg-red-500 text-white px-6 py-3 rounded-lg font-bold w-full"
+              className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-bold w-full transition"
             >
               다시 시도
             </button>
@@ -452,7 +488,7 @@ export default function Home() {
   }
 
   return (
-    <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-black">
+    <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black">
       <h1 className="text-3xl font-bold mb-6">
         영어 스피킹 학습
       </h1>
@@ -469,7 +505,7 @@ export default function Home() {
           onChange={(e) =>
             setInputEn(e.target.value)
           }
-          className="w-full border p-2 rounded mb-2"
+          className="w-full border p-3 rounded-xl mb-2"
         />
 
         <input
@@ -479,56 +515,75 @@ export default function Home() {
           onChange={(e) =>
             setInputKo(e.target.value)
           }
-          className="w-full border p-2 rounded mb-2"
+          className="w-full border p-3 rounded-xl mb-2"
         />
 
         <button
           onClick={handleAddSentence}
-          className="bg-green-500 text-white px-4 py-2 rounded w-full"
+          className="bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-xl w-full font-bold transition"
         >
           저장하기
         </button>
       </div>
 
       <div className="mb-6">
-        <div className="font-bold mb-2">
-          저장된 문장
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-bold text-lg">
+            저장된 문장
+          </div>
+
+          <div className="text-sm text-gray-500">
+            총 {sentences.length}개
+          </div>
         </div>
 
-        <div className="space-y-2 max-h-64 overflow-y-auto">
-          {sentences.map((sentence) => (
-            <div
-              key={sentence.id}
-              className="border rounded p-3 flex justify-between items-start gap-2"
-            >
-              <div>
-                <div className="font-bold">
-                  {sentence.en}
-                </div>
-
-                <div className="text-sm text-gray-500">
-                  {sentence.ko}
-                </div>
+        <div className="border rounded-2xl overflow-hidden bg-white">
+          <div className="max-h-[500px] overflow-y-auto">
+            {sentences.length === 0 ? (
+              <div className="p-6 text-center text-gray-400">
+                저장된 문장이 없습니다.
               </div>
+            ) : (
+              sentences.map(
+                (sentence, index) => (
+                  <div
+                    key={sentence.id}
+                    className="group border-b last:border-b-0 p-4 hover:bg-gray-50 transition"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-black break-words">
+                          {index + 1}.{' '}
+                          {sentence.en}
+                        </div>
 
-              <button
-                onClick={() =>
-                  handleDeleteSentence(
-                    sentence.id
-                  )
-                }
-                className="bg-red-500 text-white px-3 py-1 rounded text-sm"
-              >
-                삭제
-              </button>
-            </div>
-          ))}
+                        <div className="text-sm text-gray-500 mt-1 break-words">
+                          {sentence.ko}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() =>
+                          handleDeleteSentence(
+                            sentence.id
+                          )
+                        }
+                        className="opacity-0 group-hover:opacity-100 transition text-red-500 text-sm shrink-0"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </div>
+                )
+              )
+            )}
+          </div>
         </div>
       </div>
 
       <button
         onClick={startTest}
-        className="bg-blue-500 text-white px-6 py-3 rounded-lg w-full font-bold"
+        className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-4 rounded-xl w-full font-bold transition"
       >
         테스트 시작
       </button>
