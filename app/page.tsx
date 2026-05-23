@@ -52,6 +52,8 @@ export default function Home() {
 
   const recognitionRef = useRef<any>(null);
 
+  const transcriptRef = useRef('');
+
   const audioOk = useRef<HTMLAudioElement | null>(
     null
   );
@@ -91,14 +93,6 @@ export default function Home() {
     );
   };
 
-  const normalizeText = (text: string) => {
-    return text
-      .replace(/[^\w\s]/gi, '')
-      .toLowerCase()
-      .replace(/\s+/g, ' ')
-      .trim();
-  };
-
   const destroyRecognition = () => {
     if (!recognitionRef.current) return;
 
@@ -112,6 +106,36 @@ export default function Home() {
     } catch {}
 
     recognitionRef.current = null;
+  };
+
+  const normalizeText = (text: string) => {
+    return text
+      .replace(/[^\w\s]/gi, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  // 단어 기준 유사도 계산
+  const calculateSimilarity = (
+    user: string,
+    answer: string
+  ) => {
+    const userWords =
+      normalizeText(user).split(' ');
+
+    const answerWords =
+      normalizeText(answer).split(' ');
+
+    let matched = 0;
+
+    answerWords.forEach((word) => {
+      if (userWords.includes(word)) {
+        matched++;
+      }
+    });
+
+    return matched / answerWords.length;
   };
 
   const handleAddSentence = () => {
@@ -215,11 +239,18 @@ export default function Home() {
 
     if (!current) return;
 
-    const user = normalizeText(transcript);
+    const similarity = calculateSimilarity(
+      transcript,
+      current.en
+    );
 
-    const answer = normalizeText(current.en);
+    console.log(
+      'similarity:',
+      similarity
+    );
 
-    const isCorrect = user === answer;
+    // 80% 이상 맞으면 정답 처리
+    const isCorrect = similarity >= 0.8;
 
     if (isCorrect) {
       setStatus('success');
@@ -234,7 +265,7 @@ export default function Home() {
 
       setTimeout(() => {
         moveNext();
-      }, 1200);
+      }, 1500);
     } else {
       setStatus('fail');
 
@@ -261,8 +292,16 @@ export default function Home() {
 
     destroyRecognition();
 
+    transcriptRef.current = '';
+
+    setRecognizedText('');
+
+    setStatus('listening');
+
+    setIsRecording(true);
+
     await new Promise((resolve) =>
-      setTimeout(resolve, 250)
+      setTimeout(resolve, 200)
     );
 
     const recognition = new SpeechRecognition();
@@ -271,45 +310,43 @@ export default function Home() {
 
     recognition.lang = 'en-US';
 
-    recognition.continuous = false;
+    recognition.continuous = true;
 
-    recognition.interimResults = false;
+    recognition.interimResults = true;
 
     recognition.maxAlternatives = 1;
 
-    let transcript = '';
-
-    let completed = false;
-
-    recognition.onstart = () => {
-      setIsRecording(true);
-
-      setStatus('listening');
-
-      setRecognizedText('');
-    };
-
     recognition.onresult = (event: any) => {
-      transcript =
-        event.results[0][0].transcript;
+      let transcript = '';
+
+      for (
+        let i = 0;
+        i < event.results.length;
+        i++
+      ) {
+        transcript +=
+          event.results[i][0].transcript +
+          ' ';
+      }
+
+      transcript = transcript.trim();
+
+      transcriptRef.current = transcript;
 
       setRecognizedText(transcript);
     };
 
     recognition.onerror = (event: any) => {
-      if (completed) return;
+      console.log(event.error);
 
-      completed = true;
-
-      setIsRecording(false);
-
-      // abort는 무시
+      // aborted는 무시
       if (event.error === 'aborted') {
-        destroyRecognition();
         return;
       }
 
       setStatus('fail');
+
+      setIsRecording(false);
 
       if (event.error === 'no-speech') {
         setRecognizedText(
@@ -326,28 +363,10 @@ export default function Home() {
           `오류: ${event.error}`
         );
       }
-
-      destroyRecognition();
     };
 
     recognition.onend = () => {
-      if (completed) return;
-
-      completed = true;
-
       setIsRecording(false);
-
-      if (transcript.trim()) {
-        checkAnswer(transcript);
-      } else {
-        setStatus('fail');
-
-        setRecognizedText(
-          '음성을 인식하지 못했습니다.'
-        );
-      }
-
-      destroyRecognition();
     };
 
     try {
@@ -358,21 +377,25 @@ export default function Home() {
       setIsRecording(false);
 
       setStatus('fail');
-
-      destroyRecognition();
     }
   };
 
-  const stopListening = () => {
+  const submitSpeaking = () => {
     if (!recognitionRef.current) return;
 
     try {
       recognitionRef.current.stop();
     } catch {}
+
+    setIsRecording(false);
+
+    checkAnswer(transcriptRef.current);
   };
 
-  const handleRetry = async () => {
+  const handleRetry = () => {
     destroyRecognition();
+
+    transcriptRef.current = '';
 
     setRecognizedText('');
 
@@ -381,14 +404,6 @@ export default function Home() {
     setIsRecording(false);
 
     setCurrentAttempt((prev) => prev + 1);
-
-    // recognition release 대기
-    await new Promise((resolve) =>
-      setTimeout(resolve, 300)
-    );
-
-    // 자동 재시작
-    startListening();
   };
 
   if (isFinished) {
@@ -463,11 +478,17 @@ export default function Home() {
           </button>
         ) : (
           <button
-            onClick={stopListening}
-            className="bg-red-500 hover:bg-red-600 text-white px-6 py-4 rounded-xl font-bold w-full transition animate-pulse"
+            onClick={submitSpeaking}
+            className="bg-green-500 hover:bg-green-600 text-white px-6 py-4 rounded-xl font-bold w-full transition animate-pulse"
           >
-            녹음 종료
+            제출하기
           </button>
+        )}
+
+        {status === 'listening' && (
+          <div className="mt-4 text-blue-500 font-bold">
+            듣고 있습니다...
+          </div>
         )}
 
         {status === 'success' && (
