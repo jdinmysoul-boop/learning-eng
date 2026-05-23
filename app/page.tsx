@@ -24,11 +24,10 @@ export default function EnglishStudyApp() {
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [firstTryCount, setFirstTryCount] = useState(0);
 
+  const isActiveRef = useRef(false);       // 녹음 의도 여부
+  const transcriptRef = useRef('');        // 누적 인식 텍스트
   const recognitionRef = useRef<any>(null);
-  const transcriptRef = useRef('');
-  const finalTranscriptRef = useRef('');
-  // ✅ 핵심: 클로저 문제 해결용 ref
-  const isActiveRef = useRef(false);
+  const restartTimerRef = useRef<any>(null);
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
 
@@ -37,14 +36,132 @@ export default function EnglishStudyApp() {
     if (saved) setSentences(JSON.parse(saved));
     audioOk.current = new Audio('/sound_ok.mp3');
     audioError.current = new Audio('/sound_error.mp3');
-    return () => { killRecognition(); };
+    return () => { stopRecognition(); };
   }, []);
 
-  const saveSentences = (updated: Sentence[]) => {
-    setSentences(updated);
-    localStorage.setItem('study_sentences', JSON.stringify(updated));
+  // ── 인식 인스턴스 완전 제거 ──────────────────────────────
+  const destroyRecognition = () => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+    if (recognitionRef.current) {
+      const rec = recognitionRef.current;
+      recognitionRef.current = null;   // ← 먼저 null로 만들어 onend 재진입 차단
+      try { rec.onstart = null; rec.onresult = null; rec.onerror = null; rec.onend = null; rec.abort(); } catch (e) {}
+    }
   };
 
+  // ── 의도적 종료 (제출 / 재시도 / 리셋) ─────────────────
+  const stopRecognition = () => {
+    isActiveRef.current = false;
+    destroyRecognition();
+    setIsRecording(false);
+  };
+
+  // ── 새 인스턴스 생성 및 시작 (iOS Safari: 매번 new) ────
+  const createAndStart = () => {
+    destroyRecognition();   // 혹시 남아있는 이전 인스턴스 제거
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const rec = new SpeechRecognition();
+    recognitionRef.current = rec;
+
+    rec.lang = 'en-US';
+    rec.continuous = false;        // iOS Safari: true 미지원
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => {
+      setIsRecording(true);
+    };
+
+    rec.onresult = (event: any) => {
+      let text = '';
+      for (let i = 0; i < event.results.length; i++) {
+        text += event.results[i][0].transcript + ' ';
+      }
+      text = text.trim();
+      transcriptRef.current = text;
+      setRecognizedText(text);
+    };
+
+    rec.onerror = (event: any) => {
+      if (event.error === 'aborted' || event.error === 'no-speech') return;
+      console.error('STT error:', event.error);
+      // 심각한 에러만 중단, 나머지는 onend에서 재시작
+    };
+
+    rec.onend = () => {
+      // ✅ isActiveRef가 true면 → 사용자가 아직 말하는 중이므로 재시작
+      // ✅ isActiveRef가 false면 → 의도적 종료이므로 그냥 종료
+      if (!isActiveRef.current) {
+        setIsRecording(false);
+        return;
+      }
+      // iOS Safari는 continuous=false라 onend가 수시로 발생
+      // → 200ms 후 새 인스턴스로 재시작
+      restartTimerRef.current = setTimeout(() => {
+        if (isActiveRef.current) {
+          createAndStart();
+        }
+      }, 200);
+    };
+
+    try {
+      rec.start();
+    } catch (e) {
+      console.error('start error:', e);
+      if (isActiveRef.current) {
+        restartTimerRef.current = setTimeout(() => {
+          if (isActiveRef.current) createAndStart();
+        }, 300);
+      }
+    }
+  };
+
+  // ── 녹음 시작 (버튼) ────────────────────────────────────
+  const startListening = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('음성 인식을 지원하지 않는 브라우저입니다. Safari 또는 Chrome을 사용해주세요.');
+      return;
+    }
+
+    transcriptRef.current = '';
+    setRecognizedText('');
+    setStatus('listening');
+    isActiveRef.current = true;   // ← 의도적 시작 표시
+    createAndStart();
+  };
+
+  // ── 제출 (버튼) ─────────────────────────────────────────
+  const submitSpeaking = () => {
+    stopRecognition();   // isActiveRef=false → onend에서 재시작 안 함
+
+    const transcript = transcriptRef.current;
+    if (!transcript.trim()) {
+      setStatus('fail');
+      setRecognizedText('음성을 인식하지 못했습니다.');
+      return;
+    }
+    checkAnswer(transcript);
+  };
+
+  // ── 재시도 (버튼) ────────────────────────────────────────
+  const handleRetry = () => {
+    stopRecognition();
+    transcriptRef.current = '';
+    setRecognizedText('');
+    setStatus('idle');
+    setCurrentAttempt((prev) => prev + 1);
+  };
+
+  // ── 정답 판정 ────────────────────────────────────────────
   const normalizeText = (text: string) =>
     text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -52,42 +169,17 @@ export default function EnglishStudyApp() {
     const userWords = normalizeText(user).split(' ');
     const answerWords = normalizeText(answer).split(' ');
     let matched = 0;
-    answerWords.forEach((word) => { if (userWords.includes(word)) matched++; });
+    answerWords.forEach((w) => { if (userWords.includes(w)) matched++; });
     return matched / answerWords.length;
   };
 
-  const handleAddSentence = () => {
-    if (!inputEn.trim() || !inputKo.trim()) return;
-    const updated = [...sentences, { id: Date.now(), en: inputEn.trim(), ko: inputKo.trim() }];
-    saveSentences(updated);
-    setInputEn('');
-    setInputKo('');
-  };
-
-  const handleDeleteSentence = (id: number) => {
-    saveSentences(sentences.filter((s) => s.id !== id));
-  };
-
-  // ✅ recognition 인스턴스만 정리, isActiveRef는 건드리지 않음
-  const killRecognition = () => {
-    const rec = recognitionRef.current;
-    if (rec) {
-      try {
-        rec.onstart = null;
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
-        rec.abort();
-      } catch (e) {}
-      recognitionRef.current = null;
-    }
-  };
-
-  const checkAnswer = (transcript: string, currentSentence: Sentence, attempt: number) => {
-    const similarity = calculateSimilarity(transcript, currentSentence.en);
-    if (similarity >= 0.8) {
+  const checkAnswer = (transcript: string) => {
+    const current = testQueue[currentIndex];
+    if (!current) return;
+    const isCorrect = calculateSimilarity(transcript, current.en) >= 0.8;
+    if (isCorrect) {
       setStatus('success');
-      if (attempt === 1) setFirstTryCount((prev) => prev + 1);
+      if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
       audioOk.current?.play().catch(() => {});
       setTimeout(() => { moveNext(); }, 1500);
     } else {
@@ -97,33 +189,29 @@ export default function EnglishStudyApp() {
   };
 
   const moveNext = () => {
-    setCurrentIndex((prev) => {
-      const next = prev + 1;
-      if (next >= testQueue.length) {
-        setIsFinished(true);
-        return prev;
-      }
-      return next;
-    });
+    const next = currentIndex + 1;
+    if (next >= testQueue.length) { setIsFinished(true); return; }
     transcriptRef.current = '';
-    finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
     setCurrentAttempt(1);
+    setCurrentIndex(next);
   };
 
-  const resetToMain = () => {
-    isActiveRef.current = false;
-    killRecognition();
-    transcriptRef.current = '';
-    finalTranscriptRef.current = '';
-    setRecognizedText('');
-    setStatus('idle');
-    setCurrentAttempt(1);
-    setCurrentIndex(0);
-    setIsTesting(false);
-    setIsFinished(false);
-    setIsRecording(false);
+  const saveSentences = (updated: Sentence[]) => {
+    setSentences(updated);
+    localStorage.setItem('study_sentences', JSON.stringify(updated));
+  };
+
+  const handleAddSentence = () => {
+    if (!inputEn.trim() || !inputKo.trim()) return;
+    saveSentences([...sentences, { id: Date.now(), en: inputEn.trim(), ko: inputKo.trim() }]);
+    setInputEn('');
+    setInputKo('');
+  };
+
+  const handleDeleteSentence = (id: number) => {
+    saveSentences(sentences.filter((s) => s.id !== id));
   };
 
   const startTest = () => {
@@ -139,123 +227,18 @@ export default function EnglishStudyApp() {
     setIsTesting(true);
   };
 
-  const startListening = () => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('음성 인식을 지원하지 않는 브라우저입니다. Safari 또는 Chrome을 사용해주세요.');
-      return;
-    }
-
-    // 이전 인스턴스 완전 제거
-    killRecognition();
-
+  const resetToMain = () => {
+    stopRecognition();
     transcriptRef.current = '';
-    finalTranscriptRef.current = '';
-    setRecognizedText('');
-    setStatus('listening');
-
-    // ✅ 활성 상태를 ref로 표시 (클로저에서도 최신값 읽힘)
-    isActiveRef.current = true;
-    setIsRecording(true);
-
-    const recognition = new SpeechRecognition();
-    recognitionRef.current = recognition;
-
-    recognition.lang = 'en-US';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event: any) => {
-      let interim = '';
-      let final = '';
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          final += result[0].transcript + ' ';
-        } else {
-          interim += result[0].transcript + ' ';
-        }
-      }
-      if (final) finalTranscriptRef.current = final.trim();
-      const display = (finalTranscriptRef.current + ' ' + interim).trim();
-      transcriptRef.current = display;
-      setRecognizedText(display);
-    };
-
-    recognition.onerror = (event: any) => {
-      if (event.error === 'aborted' || event.error === 'no-speech') return;
-      console.error('STT Error:', event.error);
-      isActiveRef.current = false;
-      setStatus('fail');
-      setIsRecording(false);
-      killRecognition();
-    };
-
-    // ✅ onend: isActiveRef.current로 판단 (클로저 문제 없음)
-    recognition.onend = () => {
-      if (!isActiveRef.current) {
-        // 의도적으로 종료한 경우
-        setIsRecording(false);
-        return;
-      }
-      // iOS Safari가 강제로 끊은 경우 → 같은 인스턴스로 재시작
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch (e) {
-          // 재시작 실패 시 새 인스턴스로 재귀 호출
-          recognitionRef.current = null;
-          setTimeout(() => { startListening(); }, 100);
-        }
-      }
-    };
-
-    try {
-      recognition.start();
-    } catch (e) {
-      console.error(e);
-      isActiveRef.current = false;
-      setStatus('fail');
-      setIsRecording(false);
-      recognitionRef.current = null;
-    }
-  };
-
-  const submitSpeaking = () => {
-    // ✅ 먼저 isActiveRef를 false로 → onend가 재시작하지 않음
-    isActiveRef.current = false;
-    killRecognition();
-    setIsRecording(false);
-
-    const transcript = transcriptRef.current;
-    if (!transcript.trim()) {
-      setStatus('fail');
-      setRecognizedText('음성을 인식하지 못했습니다.');
-      return;
-    }
-
-    // ✅ state 비동기 문제 회피: currentIndex/currentAttempt를 직접 읽지 않고 인자로 전달
-    const currentIdx = currentIndex;
-    const attempt = currentAttempt;
-    const current = testQueue[currentIdx];
-    if (!current) return;
-    checkAnswer(transcript, current, attempt);
-  };
-
-  const handleRetry = () => {
-    isActiveRef.current = false;
-    killRecognition();
-    transcriptRef.current = '';
-    finalTranscriptRef.current = '';
     setRecognizedText('');
     setStatus('idle');
-    setIsRecording(false);
-    setCurrentAttempt((prev) => prev + 1);
+    setCurrentAttempt(1);
+    setCurrentIndex(0);
+    setIsTesting(false);
+    setIsFinished(false);
   };
 
-  // --- UI ---
+  // ── UI ───────────────────────────────────────────────────
 
   if (isFinished) {
     return (
