@@ -24,7 +24,7 @@ export default function EnglishStudyApp() {
 
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
-  const recognitionRef = useRef<any>(null); // 가비지 컬렉션(GC) 방지용 메모리 참조
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('study_sentences');
@@ -44,6 +44,7 @@ export default function EnglishStudyApp() {
   };
 
   const normalizeText = (text: string) => {
+    if (!text) return '';
     return text.replace(/[^a-zA-Z0-9\s]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   };
 
@@ -66,12 +67,17 @@ export default function EnglishStudyApp() {
   };
 
   const checkAnswer = (transcript: string) => {
+    if (!testQueue[currentIndex]) return;
+
     const currentSentence = testQueue[currentIndex];
     const isCorrect = normalizeText(transcript) === normalizeText(currentSentence.en);
 
     if (isCorrect) {
       setStatus('success');
-      audioOk.current?.play().catch(() => {});
+      if (audioOk.current) {
+        audioOk.current.currentTime = 0;
+        audioOk.current.play().catch(() => {});
+      }
       
       if (currentAttempt === 1) {
         setFirstTryCount(prev => prev + 1);
@@ -90,7 +96,10 @@ export default function EnglishStudyApp() {
 
     } else {
       setStatus('fail');
-      audioError.current?.play().catch(() => {});
+      if (audioError.current) {
+        audioError.current.currentTime = 0;
+        audioError.current.play().catch(() => {});
+      }
     }
   };
 
@@ -101,51 +110,63 @@ export default function EnglishStudyApp() {
       return;
     }
 
-    // 기존에 실행 중인 인스턴스가 있다면 초기화
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch (e) {}
     }
 
     const recognition = new SpeechRecognition();
-    recognitionRef.current = recognition; // 객체를 Ref에 저장하여 삭제 방지
+    recognitionRef.current = recognition;
 
     recognition.lang = 'en-US';
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
+    recognition.continuous = false; // 명시적으로 단일 문장 인식만 수행
 
     recognition.onstart = () => {
       setStatus('listening');
       setRecognizedText('');
     };
 
+    // 정상적으로 결과가 반환되었을 때
     recognition.onresult = (event: any) => {
-      if (event.results && event.results.length > 0) {
-        const transcript = event.results[0][0].transcript;
-        setRecognizedText(transcript);
-        checkAnswer(transcript);
-      } else {
+      try {
+        if (event.results && event.results.length > 0) {
+          const transcript = event.results[0][0].transcript;
+          setRecognizedText(transcript);
+          checkAnswer(transcript);
+        } else {
+          setStatus('fail');
+          setRecognizedText('인식된 텍스트가 없습니다.');
+        }
+      } catch (error) {
         setStatus('fail');
+        setRecognizedText('인식 중 오류가 발생했습니다.');
       }
     };
 
+    // 브라우저가 발음을 전혀 매칭하지 못했을 때
     recognition.onnomatch = () => {
       setStatus('fail');
       setRecognizedText('발음을 인식하지 못했습니다.');
     };
 
+    // 권한 거부, 네트워크 오류, 또는 마이크가 감지되지 않았을 때
     recognition.onerror = (event: any) => {
-      setStatus('idle');
+      setStatus('fail');
       if (event.error === 'no-speech') {
-        // 음성이 감지되지 않았을 때의 무한 대기 방지
+        setRecognizedText('목소리가 감지되지 않았습니다.');
       } else {
-        console.error('Speech recognition error:', event.error);
+        setRecognizedText(`오류 발생: ${event.error}`);
       }
     };
 
+    // 마이크가 꺼졌을 때 (무한 로딩 방지)
     recognition.onend = () => {
-      // 마이크 아이콘이 사라졌음에도 UI가 멈춰있을 경우 상태를 강제 초기화
       setStatus((prev) => {
-        if (prev === 'listening') return 'idle';
+        if (prev === 'listening') {
+          setRecognizedText('음성 인식이 중단되었습니다.');
+          return 'fail';
+        }
         return prev;
       });
     };
