@@ -50,10 +50,6 @@ export default function EnglishStudyApp() {
   const [firstTryCount, setFirstTryCount] =
     useState(0);
 
-  // 핵심 lock
-  const [canStart, setCanStart] =
-    useState(true);
-
   const recognitionRef = useRef<any>(null);
 
   const transcriptRef = useRef('');
@@ -227,8 +223,6 @@ export default function EnglishStudyApp() {
     setIsFinished(false);
 
     setIsRecording(false);
-
-    setCanStart(true);
   };
 
   const checkAnswer = (
@@ -281,15 +275,14 @@ export default function EnglishStudyApp() {
       return;
     }
 
-    // 핵심
-    if (!canStart) {
-      console.log(
-        'recognition 종료 대기중'
-      );
-      return;
-    }
-
     if (isRecording) return;
+
+    // 이전 인스턴스가 존재한다면 확실하게 강제 종료
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+    }
 
     transcriptRef.current = '';
 
@@ -298,9 +291,6 @@ export default function EnglishStudyApp() {
     setStatus('listening');
 
     setIsRecording(true);
-
-    // lock
-    setCanStart(false);
 
     const recognition = new SpeechRecognition();
 
@@ -341,8 +331,6 @@ export default function EnglishStudyApp() {
 
       recognitionRef.current = null;
 
-      setCanStart(true);
-
       if (event.error === 'aborted') {
         return;
       }
@@ -350,16 +338,12 @@ export default function EnglishStudyApp() {
       setStatus('fail');
     };
 
-    // 핵심
     recognition.onend = () => {
       console.log('recognition ended');
 
       setIsRecording(false);
 
       recognitionRef.current = null;
-
-      // unlock
-      setCanStart(true);
     };
 
     try {
@@ -370,30 +354,27 @@ export default function EnglishStudyApp() {
       setIsRecording(false);
 
       recognitionRef.current = null;
-
-      setCanStart(true);
     }
   };
 
   const submitSpeaking = () => {
-    const transcript =
-      transcriptRef.current;
+    const transcript = transcriptRef.current;
 
-    if (!transcript.trim()) {
-      setStatus('fail');
-
-      setRecognizedText(
-        '음성을 인식하지 못했습니다.'
-      );
-
-      return;
-    }
-
+    // 조기 리턴 전에 무조건 상태 리셋 및 마이크 중지
     setIsRecording(false);
-
+    
     try {
       recognitionRef.current?.stop();
     } catch {}
+
+    // 인식이 전혀 안 된 상태로 제출 시
+    if (!transcript.trim()) {
+      setStatus('fail');
+      setRecognizedText(
+        '음성을 인식하지 못했습니다.'
+      );
+      return;
+    }
 
     checkAnswer(transcript);
   };
