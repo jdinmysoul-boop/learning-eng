@@ -160,10 +160,8 @@ export default function EnglishStudyApp() {
   stopRecognition();
   transcriptRef.current = '';
   setRecognizedText('');
-  setStatus('listening');
   setCurrentAttempt((prev) => prev + 1);
-  isActiveRef.current = true;
-  createAndStart();
+  setStatus('idle');  // createAndStart() 호출 없이 idle로만 변경
 };
 
   // ── 정답 판정 ────────────────────────────────────────────
@@ -280,16 +278,27 @@ export default function EnglishStudyApp() {
         )}
         {status === 'success' && <div className="mt-6 text-blue-500 text-2xl font-bold">정답!</div>}
         {status === 'fail' && (
-          <div className="mt-6">
-            <div className="mb-4">
-              <div className="text-sm text-gray-500">정답 (참고용)</div>
-              <div className="text-xl font-bold">{current.en}</div>
-            </div>
-            <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
-              다시 시도하기
-            </button>
-          </div>
-        )}
+  <div className="mt-6">
+    <div className="mb-4">
+      <div className="text-sm text-gray-500">정답 (참고용)</div>
+      <div className="text-xl font-bold">{current.en}</div>
+    </div>
+    <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full mb-3">
+      다시 시도하기
+    </button>
+  </div>
+)}
+{status === 'idle' && currentAttempt > 1 && (
+  // 재시도 중일 때 발음 시작 버튼 색을 다르게 해서 구분
+  <button onClick={startListening} className="bg-orange-500 text-white px-6 py-4 rounded-xl font-bold w-full">
+    다시 발음하기
+  </button>
+)}
+{status === 'idle' && currentAttempt === 1 && (
+  <button onClick={startListening} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
+    발음 시작
+  </button>
+)}
       </div>
     );
   }
