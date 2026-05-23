@@ -9,8 +9,7 @@ interface Sentence {
 
 type Status =
   | 'idle'
-  | 'recording'
-  | 'processing'
+  | 'listening'
   | 'success'
   | 'fail';
 
@@ -47,10 +46,10 @@ export default function Home() {
   const [isFinished, setIsFinished] =
     useState(false);
 
-  const mediaRecorderRef =
-    useRef<MediaRecorder | null>(null);
+  const [isRecording, setIsRecording] =
+    useState(false);
 
-  const chunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
 
   const audioOk = useRef<HTMLAudioElement | null>(
     null
@@ -74,6 +73,22 @@ export default function Home() {
     audioError.current = new Audio(
       '/sound_error.mp3'
     );
+
+    audioOk.current.oncanplaythrough = () => {
+      console.log('OK SOUND READY');
+    };
+
+    audioError.current.oncanplaythrough = () => {
+      console.log('ERROR SOUND READY');
+    };
+
+    audioOk.current.onerror = (e) => {
+      console.error('OK SOUND ERROR', e);
+    };
+
+    audioError.current.onerror = (e) => {
+      console.error('ERROR SOUND ERROR', e);
+    };
   }, []);
 
   const normalizeText = (text: string) => {
@@ -165,6 +180,9 @@ export default function Home() {
 
     const answer = normalizeText(current.en);
 
+    console.log('USER:', user);
+    console.log('ANSWER:', answer);
+
     const isCorrect = user === answer;
 
     if (isCorrect) {
@@ -174,7 +192,9 @@ export default function Home() {
         setFirstTryCount((prev) => prev + 1);
       }
 
-      audioOk.current?.play().catch(() => {});
+      audioOk.current
+        ?.play()
+        .catch((e) => console.error(e));
 
       setTimeout(() => {
         moveNext();
@@ -182,96 +202,136 @@ export default function Home() {
     } else {
       setStatus('fail');
 
-      audioError.current?.play().catch(() => {});
+      audioError.current
+        ?.play()
+        .catch((e) => console.error(e));
     }
   };
 
-  const startRecording = async () => {
-    try {
+  const toggleListening = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      alert(
+        '이 브라우저는 음성 인식을 지원하지 않습니다.\n크롬 최신버전을 사용해주세요.'
+      );
+      return;
+    }
+
+    // 녹음 중이면 종료
+    if (
+      isRecording &&
+      recognitionRef.current
+    ) {
+      console.log('MANUAL STOP');
+
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        console.error(e);
+      }
+
+      setIsRecording(false);
+
+      return;
+    }
+
+    // 이전 인스턴스 정리
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+    }
+
+    const recognition = new SpeechRecognition();
+
+    recognitionRef.current = recognition;
+
+    recognition.lang = 'en-US';
+
+    recognition.continuous = true;
+
+    recognition.interimResults = true;
+
+    recognition.maxAlternatives = 1;
+
+    let finalTranscript = '';
+
+    recognition.onstart = () => {
+      console.log('LISTEN START');
+
+      setStatus('listening');
+
       setRecognizedText('');
 
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
+      setIsRecording(true);
+    };
 
-      const mediaRecorder = new MediaRecorder(
-        stream
-      );
+    recognition.onresult = (event: any) => {
+      console.log('RESULT EVENT');
 
-      mediaRecorderRef.current = mediaRecorder;
+      let transcript = '';
 
-      chunksRef.current = [];
+      for (
+        let i = event.resultIndex;
+        i < event.results.length;
+        i++
+      ) {
+        transcript +=
+          event.results[i][0].transcript;
+      }
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
-      };
+      console.log('TRANSCRIPT:', transcript);
 
-      mediaRecorder.onstop = async () => {
-        try {
-          setStatus('processing');
+      finalTranscript = transcript;
 
-          const audioBlob = new Blob(
-            chunksRef.current,
-            {
-              type: 'audio/webm',
-            }
-          );
+      setRecognizedText(transcript);
+    };
 
-          const formData = new FormData();
+    recognition.onerror = (event: any) => {
+      console.log('ERROR EVENT', event);
 
-          formData.append(
-            'file',
-            audioBlob,
-            'recording.webm'
-          );
+      setStatus('fail');
 
-          const res = await fetch(
-            '/api/transcribe',
-            {
-              method: 'POST',
-              body: formData,
-            }
-          );
+      setIsRecording(false);
 
-          const data = await res.json();
+      if (event.error === 'no-speech') {
+        setRecognizedText(
+          '음성이 감지되지 않았습니다.'
+        );
+      } else {
+        setRecognizedText(
+          `오류: ${event.error}`
+        );
+      }
+    };
 
-          console.log(data);
+    recognition.onend = () => {
+      console.log('LISTEN END');
 
-          const transcript = data.text || '';
+      setIsRecording(false);
 
-          setRecognizedText(transcript);
+      if (finalTranscript.trim()) {
+        checkAnswer(finalTranscript);
+      } else {
+        setStatus('fail');
 
-          checkAnswer(transcript);
-        } catch (error) {
-          console.error(error);
+        setRecognizedText(
+          '음성을 인식하지 못했습니다.'
+        );
+      }
+    };
 
-          setStatus('fail');
-
-          setRecognizedText(
-            '음성 분석 실패'
-          );
-        }
-      };
-
-      mediaRecorder.start();
-
-      setStatus('recording');
-
-      // 3초 녹음
-      setTimeout(() => {
-        mediaRecorder.stop();
-
-        stream
-          .getTracks()
-          .forEach((track) => track.stop());
-      }, 3000);
+    try {
+      recognition.start();
     } catch (error) {
       console.error(error);
 
-      alert('마이크 권한이 필요합니다.');
+      setStatus('fail');
+
+      setIsRecording(false);
     }
   };
 
@@ -285,7 +345,7 @@ export default function Home() {
 
   if (isFinished) {
     return (
-      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-center">
+      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-black text-center">
         <h1 className="text-3xl font-bold mb-4">
           테스트 완료
         </h1>
@@ -304,6 +364,15 @@ export default function Home() {
         >
           다시 테스트
         </button>
+
+        <button
+          onClick={() => {
+            setIsTesting(false);
+          }}
+          className="mt-4 underline text-gray-500"
+        >
+          메인으로 돌아가기
+        </button>
       </div>
     );
   }
@@ -315,7 +384,7 @@ export default function Home() {
     if (!current) return null;
 
     return (
-      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-center">
+      <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-black text-center">
         <div className="mb-4 text-gray-500">
           {currentIndex + 1} /{' '}
           {testQueue.length}
@@ -327,7 +396,7 @@ export default function Home() {
 
         {recognizedText && (
           <div
-            className={`mb-6 text-xl font-bold ${
+            className={`mb-6 text-xl font-bold break-words ${
               status === 'success'
                 ? 'text-blue-600'
                 : status === 'fail'
@@ -339,35 +408,27 @@ export default function Home() {
           </div>
         )}
 
-        {status === 'idle' && (
-          <button
-            onClick={startRecording}
-            className="bg-blue-500 text-white px-6 py-3 rounded-lg font-bold w-full"
-          >
-            발음 시작
-          </button>
-        )}
-
-        {status === 'recording' && (
-          <div className="text-red-500 text-2xl font-bold animate-pulse">
-            녹음 중...
-          </div>
-        )}
-
-        {status === 'processing' && (
-          <div className="text-blue-500 text-2xl font-bold animate-pulse">
-            분석 중...
-          </div>
-        )}
+        <button
+          onClick={toggleListening}
+          className={`px-6 py-3 rounded-lg font-bold w-full text-white transition ${
+            isRecording
+              ? 'bg-red-500'
+              : 'bg-blue-500'
+          }`}
+        >
+          {isRecording
+            ? '녹음 종료'
+            : '발음 시작'}
+        </button>
 
         {status === 'success' && (
-          <div className="text-blue-500 text-2xl font-bold">
+          <div className="text-blue-500 text-2xl font-bold mt-6">
             정답!
           </div>
         )}
 
         {status === 'fail' && (
-          <div>
+          <div className="mt-6">
             <div className="mb-4">
               <div className="text-sm text-gray-500">
                 정답
@@ -391,12 +452,16 @@ export default function Home() {
   }
 
   return (
-    <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md">
+    <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-xl shadow-md text-black">
       <h1 className="text-3xl font-bold mb-6">
         영어 스피킹 학습
       </h1>
 
       <div className="mb-6">
+        <h2 className="text-lg font-bold mb-2">
+          새 문장 추가
+        </h2>
+
         <input
           type="text"
           placeholder="영어 문장"
@@ -426,7 +491,11 @@ export default function Home() {
       </div>
 
       <div className="mb-6">
-        저장 문장: {sentences.length}개
+        현재 저장된 문장:{' '}
+        <strong>
+          {sentences.length}
+        </strong>
+        개
       </div>
 
       <button
