@@ -50,10 +50,12 @@ export default function EnglishStudyApp() {
   const [isFinished, setIsFinished] =
     useState(false);
 
-  // 핵심
-  // recognition 객체를 state처럼 재사용하지 않고
-  // 매번 새로 생성 후 즉시 폐기
   const recognitionRef = useRef<any>(null);
+
+  // 핵심
+  // 이전 recognition 종료 여부 추적
+  const recognitionEndedRef =
+    useRef(true);
 
   const transcriptRef = useRef('');
 
@@ -81,27 +83,11 @@ export default function EnglishStudyApp() {
     );
 
     return () => {
-      cleanupRecognition();
+      try {
+        recognitionRef.current?.stop();
+      } catch {}
     };
   }, []);
-
-  // 핵심 cleanup
-  const cleanupRecognition = () => {
-    try {
-      if (recognitionRef.current) {
-        recognitionRef.current.onstart = null;
-        recognitionRef.current.onresult = null;
-        recognitionRef.current.onerror = null;
-        recognitionRef.current.onend = null;
-
-        recognitionRef.current.abort();
-      }
-    } catch {}
-
-    recognitionRef.current = null;
-
-    setIsRecording(false);
-  };
 
   const saveSentences = (
     updated: Sentence[]
@@ -122,7 +108,7 @@ export default function EnglishStudyApp() {
       .trim();
   };
 
-  // 단어 유사도 비교
+  // 단어 기준 유사도
   const calculateSimilarity = (
     user: string,
     answer: string
@@ -179,8 +165,6 @@ export default function EnglishStudyApp() {
       return;
     }
 
-    cleanupRecognition();
-
     const shuffled = [...sentences].sort(
       () => Math.random() - 0.5
     );
@@ -205,8 +189,6 @@ export default function EnglishStudyApp() {
   };
 
   const moveNext = () => {
-    cleanupRecognition();
-
     const nextIndex = currentIndex + 1;
 
     if (nextIndex >= testQueue.length) {
@@ -226,7 +208,13 @@ export default function EnglishStudyApp() {
   };
 
   const resetToMain = () => {
-    cleanupRecognition();
+    try {
+      recognitionRef.current?.stop();
+    } catch {}
+
+    recognitionRef.current = null;
+
+    recognitionEndedRef.current = true;
 
     transcriptRef.current = '';
 
@@ -241,6 +229,8 @@ export default function EnglishStudyApp() {
     setIsTesting(false);
 
     setIsFinished(false);
+
+    setIsRecording(false);
   };
 
   const checkAnswer = (
@@ -299,16 +289,17 @@ export default function EnglishStudyApp() {
       return;
     }
 
-    // 이미 녹음 중이면 차단
+    // 이미 녹음중이면 차단
     if (isRecording) return;
 
-    // 이전 세션 완전 제거
-    cleanupRecognition();
+    // 이전 recognition 종료 안됐으면 차단
+    if (!recognitionEndedRef.current) {
+      console.log(
+        '이전 recognition 종료 대기중'
+      );
 
-    // Chrome release 대기
-    await new Promise((resolve) =>
-      setTimeout(resolve, 400)
-    );
+      return;
+    }
 
     transcriptRef.current = '';
 
@@ -318,7 +309,9 @@ export default function EnglishStudyApp() {
 
     setIsRecording(true);
 
-    // 매번 새 recognition 생성
+    // 핵심
+    recognitionEndedRef.current = false;
+
     const recognition = new SpeechRecognition();
 
     recognitionRef.current = recognition;
@@ -361,7 +354,8 @@ export default function EnglishStudyApp() {
 
       recognitionRef.current = null;
 
-      // aborted는 무시
+      recognitionEndedRef.current = true;
+
       if (event.error === 'aborted') {
         return;
       }
@@ -380,9 +374,13 @@ export default function EnglishStudyApp() {
     };
 
     recognition.onend = () => {
-      setIsRecording(false);
+      console.log('recognition ended');
+
+      recognitionEndedRef.current = true;
 
       recognitionRef.current = null;
+
+      setIsRecording(false);
     };
 
     try {
@@ -393,6 +391,8 @@ export default function EnglishStudyApp() {
       setIsRecording(false);
 
       recognitionRef.current = null;
+
+      recognitionEndedRef.current = true;
 
       setStatus('fail');
     }
@@ -412,23 +412,21 @@ export default function EnglishStudyApp() {
       return;
     }
 
-    try {
-      recognitionRef.current?.stop();
-    } catch {}
-
     setIsRecording(false);
 
-    recognitionRef.current = null;
+    // stop만 호출
+    // cleanup 금지
+    try {
+      recognitionRef.current?.stop();
+    } catch (error) {
+      console.log(error);
+    }
 
+    // 즉시 채점
     checkAnswer(transcript);
   };
 
-  // 핵심
-  // retry는 상태만 초기화
-  // 자동 start 안함
-  const handleRetry = async () => {
-    cleanupRecognition();
-
+  const handleRetry = () => {
     transcriptRef.current = '';
 
     setRecognizedText('');
@@ -437,9 +435,7 @@ export default function EnglishStudyApp() {
 
     setCurrentAttempt((prev) => prev + 1);
 
-    await new Promise((resolve) =>
-      setTimeout(resolve, 400)
-    );
+    setIsRecording(false);
   };
 
   if (isFinished) {
@@ -529,8 +525,6 @@ export default function EnglishStudyApp() {
           </div>
         )}
 
-        {/* 핵심 수정 */}
-        {/* fail일 때만 다시 시도 버튼 */}
         {status === 'fail' && (
           <div className="mt-6">
             <div className="mb-4">
