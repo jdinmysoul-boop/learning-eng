@@ -24,6 +24,7 @@ export default function EnglishStudyApp() {
 
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
+  const recognitionRef = useRef<any>(null); // 가비지 컬렉션(GC) 방지용 메모리 참조
 
   useEffect(() => {
     const saved = localStorage.getItem('study_sentences');
@@ -64,48 +65,6 @@ export default function EnglishStudyApp() {
     setIsTesting(true);
   };
 
-  const startListening = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('이 브라우저에서는 음성 인식을 지원하지 않습니다. 모바일 사파리 또는 크롬을 이용해주세요.');
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      setStatus('listening');
-      setRecognizedText('');
-    };
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setRecognizedText(transcript);
-      checkAnswer(transcript);
-    };
-
-    recognition.onerror = (event: any) => {
-      setStatus('idle');
-      if (event.error === 'no-speech') {
-        alert('목소리가 감지되지 않았습니다. 다시 버튼을 누르고 발음해주세요.');
-      } else {
-        alert('음성 인식 오류: ' + event.error);
-      }
-    };
-
-    recognition.onend = () => {
-      setStatus((prev) => {
-        if (prev === 'listening') return 'idle';
-        return prev;
-      });
-    };
-
-    recognition.start();
-  };
-
   const checkAnswer = (transcript: string) => {
     const currentSentence = testQueue[currentIndex];
     const isCorrect = normalizeText(transcript) === normalizeText(currentSentence.en);
@@ -133,6 +92,65 @@ export default function EnglishStudyApp() {
       setStatus('fail');
       audioError.current?.play().catch(() => {});
     }
+  };
+
+  const startListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('이 브라우저에서는 음성 인식을 지원하지 않습니다. 모바일 사파리 또는 크롬을 이용해주세요.');
+      return;
+    }
+
+    // 기존에 실행 중인 인스턴스가 있다면 초기화
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch (e) {}
+    }
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition; // 객체를 Ref에 저장하여 삭제 방지
+
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setStatus('listening');
+      setRecognizedText('');
+    };
+
+    recognition.onresult = (event: any) => {
+      if (event.results && event.results.length > 0) {
+        const transcript = event.results[0][0].transcript;
+        setRecognizedText(transcript);
+        checkAnswer(transcript);
+      } else {
+        setStatus('fail');
+      }
+    };
+
+    recognition.onnomatch = () => {
+      setStatus('fail');
+      setRecognizedText('발음을 인식하지 못했습니다.');
+    };
+
+    recognition.onerror = (event: any) => {
+      setStatus('idle');
+      if (event.error === 'no-speech') {
+        // 음성이 감지되지 않았을 때의 무한 대기 방지
+      } else {
+        console.error('Speech recognition error:', event.error);
+      }
+    };
+
+    recognition.onend = () => {
+      // 마이크 아이콘이 사라졌음에도 UI가 멈춰있을 경우 상태를 강제 초기화
+      setStatus((prev) => {
+        if (prev === 'listening') return 'idle';
+        return prev;
+      });
+    };
+
+    recognition.start();
   };
 
   const handleRetry = () => {
