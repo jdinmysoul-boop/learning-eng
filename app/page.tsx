@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 interface Sentence {
+  id: number;
   en: string;
   ko: string;
 }
@@ -74,22 +75,25 @@ export default function Home() {
       '/sound_error.mp3'
     );
 
-    audioOk.current.oncanplaythrough = () => {
-      console.log('OK SOUND READY');
-    };
-
-    audioError.current.oncanplaythrough = () => {
-      console.log('ERROR SOUND READY');
-    };
-
-    audioOk.current.onerror = (e) => {
-      console.error('OK SOUND ERROR', e);
-    };
-
-    audioError.current.onerror = (e) => {
-      console.error('ERROR SOUND ERROR', e);
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
     };
   }, []);
+
+  const saveSentences = (
+    updated: Sentence[]
+  ) => {
+    setSentences(updated);
+
+    localStorage.setItem(
+      'study_sentences',
+      JSON.stringify(updated)
+    );
+  };
 
   const normalizeText = (text: string) => {
     return text
@@ -107,20 +111,26 @@ export default function Home() {
     const updated = [
       ...sentences,
       {
+        id: Date.now(),
         en: inputEn.trim(),
         ko: inputKo.trim(),
       },
     ];
 
-    setSentences(updated);
-
-    localStorage.setItem(
-      'study_sentences',
-      JSON.stringify(updated)
-    );
+    saveSentences(updated);
 
     setInputEn('');
     setInputKo('');
+  };
+
+  const handleDeleteSentence = (
+    id: number
+  ) => {
+    const updated = sentences.filter(
+      (sentence) => sentence.id !== id
+    );
+
+    saveSentences(updated);
   };
 
   const startTest = () => {
@@ -171,7 +181,9 @@ export default function Home() {
     });
   };
 
-  const checkAnswer = (transcript: string) => {
+  const checkAnswer = (
+    transcript: string
+  ) => {
     const current = testQueue[currentIndex];
 
     if (!current) return;
@@ -179,9 +191,6 @@ export default function Home() {
     const user = normalizeText(transcript);
 
     const answer = normalizeText(current.en);
-
-    console.log('USER:', user);
-    console.log('ANSWER:', answer);
 
     const isCorrect = user === answer;
 
@@ -194,7 +203,7 @@ export default function Home() {
 
       audioOk.current
         ?.play()
-        .catch((e) => console.error(e));
+        .catch(() => {});
 
       setTimeout(() => {
         moveNext();
@@ -204,43 +213,33 @@ export default function Home() {
 
       audioError.current
         ?.play()
-        .catch((e) => console.error(e));
+        .catch(() => {});
     }
   };
 
-  const toggleListening = () => {
+  const startListening = () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       alert(
-        '이 브라우저는 음성 인식을 지원하지 않습니다.\n크롬 최신버전을 사용해주세요.'
+        '크롬 최신 브라우저를 사용해주세요.'
       );
       return;
     }
 
-    // 녹음 중이면 종료
-    if (
-      isRecording &&
-      recognitionRef.current
-    ) {
-      console.log('MANUAL STOP');
-
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        console.error(e);
-      }
-
-      setIsRecording(false);
-
-      return;
-    }
-
-    // 이전 인스턴스 정리
+    // 이전 recognition 완전 제거
     if (recognitionRef.current) {
       try {
+        recognitionRef.current.onresult =
+          null;
+
+        recognitionRef.current.onend = null;
+
+        recognitionRef.current.onerror =
+          null;
+
         recognitionRef.current.abort();
       } catch {}
     }
@@ -251,51 +250,39 @@ export default function Home() {
 
     recognition.lang = 'en-US';
 
-    recognition.continuous = true;
+    recognition.continuous = false;
 
-    recognition.interimResults = true;
+    recognition.interimResults = false;
 
     recognition.maxAlternatives = 1;
 
     let finalTranscript = '';
 
+    let finished = false;
+
     recognition.onstart = () => {
-      console.log('LISTEN START');
+      setIsRecording(true);
 
       setStatus('listening');
 
       setRecognizedText('');
-
-      setIsRecording(true);
     };
 
     recognition.onresult = (event: any) => {
-      console.log('RESULT EVENT');
+      finalTranscript =
+        event.results[0][0].transcript;
 
-      let transcript = '';
-
-      for (
-        let i = event.resultIndex;
-        i < event.results.length;
-        i++
-      ) {
-        transcript +=
-          event.results[i][0].transcript;
-      }
-
-      console.log('TRANSCRIPT:', transcript);
-
-      finalTranscript = transcript;
-
-      setRecognizedText(transcript);
+      setRecognizedText(finalTranscript);
     };
 
     recognition.onerror = (event: any) => {
-      console.log('ERROR EVENT', event);
+      if (finished) return;
 
-      setStatus('fail');
+      finished = true;
 
       setIsRecording(false);
+
+      setStatus('fail');
 
       if (event.error === 'no-speech') {
         setRecognizedText(
@@ -309,7 +296,9 @@ export default function Home() {
     };
 
     recognition.onend = () => {
-      console.log('LISTEN END');
+      if (finished) return;
+
+      finished = true;
 
       setIsRecording(false);
 
@@ -329,9 +318,17 @@ export default function Home() {
     } catch (error) {
       console.error(error);
 
-      setStatus('fail');
-
       setIsRecording(false);
+
+      setStatus('fail');
+    }
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
     }
   };
 
@@ -366,9 +363,9 @@ export default function Home() {
         </button>
 
         <button
-          onClick={() => {
-            setIsTesting(false);
-          }}
+          onClick={() =>
+            setIsTesting(false)
+          }
           className="mt-4 underline text-gray-500"
         >
           메인으로 돌아가기
@@ -408,18 +405,21 @@ export default function Home() {
           </div>
         )}
 
-        <button
-          onClick={toggleListening}
-          className={`px-6 py-3 rounded-lg font-bold w-full text-white transition ${
-            isRecording
-              ? 'bg-red-500'
-              : 'bg-blue-500'
-          }`}
-        >
-          {isRecording
-            ? '녹음 종료'
-            : '발음 시작'}
-        </button>
+        {!isRecording ? (
+          <button
+            onClick={startListening}
+            className="bg-blue-500 text-white px-6 py-3 rounded-lg font-bold w-full"
+          >
+            발음 시작
+          </button>
+        ) : (
+          <button
+            onClick={stopListening}
+            className="bg-red-500 text-white px-6 py-3 rounded-lg font-bold w-full"
+          >
+            녹음 종료
+          </button>
+        )}
 
         {status === 'success' && (
           <div className="text-blue-500 text-2xl font-bold mt-6">
@@ -491,11 +491,39 @@ export default function Home() {
       </div>
 
       <div className="mb-6">
-        현재 저장된 문장:{' '}
-        <strong>
-          {sentences.length}
-        </strong>
-        개
+        <div className="font-bold mb-2">
+          저장된 문장
+        </div>
+
+        <div className="space-y-2 max-h-64 overflow-y-auto">
+          {sentences.map((sentence) => (
+            <div
+              key={sentence.id}
+              className="border rounded p-3 flex justify-between items-start gap-2"
+            >
+              <div>
+                <div className="font-bold">
+                  {sentence.en}
+                </div>
+
+                <div className="text-sm text-gray-500">
+                  {sentence.ko}
+                </div>
+              </div>
+
+              <button
+                onClick={() =>
+                  handleDeleteSentence(
+                    sentence.id
+                  )
+                }
+                className="bg-red-500 text-white px-3 py-1 rounded text-sm"
+              >
+                삭제
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
 
       <button
