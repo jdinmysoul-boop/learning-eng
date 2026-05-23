@@ -31,14 +31,17 @@ export default function EnglishStudyApp() {
   const audioOk = useRef<HTMLAudioElement | null>(null);
   const audioError = useRef<HTMLAudioElement | null>(null);
 
-  useEffect(() => {
-    const saved = localStorage.getItem('study_sentences');
-    if (saved) setSentences(JSON.parse(saved));
-    audioOk.current = new Audio('/sound_ok.mp3');
-    audioError.current = new Audio('/sound_error.mp3');
-    return () => { stopRecognition(); };
-  }, []);
+ useEffect(() => {
+  const saved = localStorage.getItem('study_sentences');
+  if (saved) setSentences(JSON.parse(saved));
+  audioOk.current = new Audio('/sound_ok.mp3');
+  audioError.current = new Audio('/sound_error.mp3');
 
+  // 이 줄 추가
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+
+  return () => { stopRecognition(); };
+}, []);
   // ── 인식 인스턴스 완전 제거 ──────────────────────────────
   const destroyRecognition = () => {
     if (restartTimerRef.current) {

@@ -1,0 +1,9 @@
+{
+  "name": "영어 스피킹 학습",
+  "short_name": "스피킹",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "icons": []
+}
