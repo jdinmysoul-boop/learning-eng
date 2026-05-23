@@ -41,21 +41,20 @@ export default function EnglishStudyApp() {
   const [isRecording, setIsRecording] =
     useState(false);
 
+  const [isFinished, setIsFinished] =
+    useState(false);
+
   const [currentAttempt, setCurrentAttempt] =
     useState(1);
 
   const [firstTryCount, setFirstTryCount] =
     useState(0);
 
-  const [isFinished, setIsFinished] =
-    useState(false);
+  // 핵심 lock
+  const [canStart, setCanStart] =
+    useState(true);
 
   const recognitionRef = useRef<any>(null);
-
-  // 핵심
-  // 이전 recognition 종료 여부 추적
-  const recognitionEndedRef =
-    useRef(true);
 
   const transcriptRef = useRef('');
 
@@ -84,7 +83,7 @@ export default function EnglishStudyApp() {
 
     return () => {
       try {
-        recognitionRef.current?.stop();
+        recognitionRef.current?.abort();
       } catch {}
     };
   }, []);
@@ -108,7 +107,6 @@ export default function EnglishStudyApp() {
       .trim();
   };
 
-  // 단어 기준 유사도
   const calculateSimilarity = (
     user: string,
     answer: string
@@ -189,9 +187,9 @@ export default function EnglishStudyApp() {
   };
 
   const moveNext = () => {
-    const nextIndex = currentIndex + 1;
+    const next = currentIndex + 1;
 
-    if (nextIndex >= testQueue.length) {
+    if (next >= testQueue.length) {
       setIsFinished(true);
       return;
     }
@@ -204,17 +202,15 @@ export default function EnglishStudyApp() {
 
     setCurrentAttempt(1);
 
-    setCurrentIndex(nextIndex);
+    setCurrentIndex(next);
   };
 
   const resetToMain = () => {
     try {
-      recognitionRef.current?.stop();
+      recognitionRef.current?.abort();
     } catch {}
 
     recognitionRef.current = null;
-
-    recognitionEndedRef.current = true;
 
     transcriptRef.current = '';
 
@@ -231,6 +227,8 @@ export default function EnglishStudyApp() {
     setIsFinished(false);
 
     setIsRecording(false);
+
+    setCanStart(true);
   };
 
   const checkAnswer = (
@@ -243,11 +241,6 @@ export default function EnglishStudyApp() {
     const similarity = calculateSimilarity(
       transcript,
       current.en
-    );
-
-    console.log(
-      'SIMILARITY:',
-      similarity
     );
 
     const isCorrect = similarity >= 0.8;
@@ -275,8 +268,7 @@ export default function EnglishStudyApp() {
     }
   };
 
-  // 핵심 안정화 버전
-  const startListening = async () => {
+  const startListening = () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition ||
       (window as any)
@@ -289,17 +281,15 @@ export default function EnglishStudyApp() {
       return;
     }
 
-    // 이미 녹음중이면 차단
-    if (isRecording) return;
-
-    // 이전 recognition 종료 안됐으면 차단
-    if (!recognitionEndedRef.current) {
+    // 핵심
+    if (!canStart) {
       console.log(
-        '이전 recognition 종료 대기중'
+        'recognition 종료 대기중'
       );
-
       return;
     }
+
+    if (isRecording) return;
 
     transcriptRef.current = '';
 
@@ -309,8 +299,8 @@ export default function EnglishStudyApp() {
 
     setIsRecording(true);
 
-    // 핵심
-    recognitionEndedRef.current = false;
+    // lock
+    setCanStart(false);
 
     const recognition = new SpeechRecognition();
 
@@ -345,42 +335,31 @@ export default function EnglishStudyApp() {
     };
 
     recognition.onerror = (event: any) => {
-      console.log(
-        'recognition error:',
-        event.error
-      );
+      console.log(event.error);
 
       setIsRecording(false);
 
       recognitionRef.current = null;
 
-      recognitionEndedRef.current = true;
+      setCanStart(true);
 
       if (event.error === 'aborted') {
         return;
       }
 
-      if (event.error === 'no-speech') {
-        setRecognizedText(
-          '음성이 감지되지 않았습니다.'
-        );
-      } else {
-        setRecognizedText(
-          `오류: ${event.error}`
-        );
-      }
-
       setStatus('fail');
     };
 
+    // 핵심
     recognition.onend = () => {
       console.log('recognition ended');
 
-      recognitionEndedRef.current = true;
+      setIsRecording(false);
 
       recognitionRef.current = null;
 
-      setIsRecording(false);
+      // unlock
+      setCanStart(true);
     };
 
     try {
@@ -392,9 +371,7 @@ export default function EnglishStudyApp() {
 
       recognitionRef.current = null;
 
-      recognitionEndedRef.current = true;
-
-      setStatus('fail');
+      setCanStart(true);
     }
   };
 
@@ -414,15 +391,10 @@ export default function EnglishStudyApp() {
 
     setIsRecording(false);
 
-    // stop만 호출
-    // cleanup 금지
     try {
       recognitionRef.current?.stop();
-    } catch (error) {
-      console.log(error);
-    }
+    } catch {}
 
-    // 즉시 채점
     checkAnswer(transcript);
   };
 
@@ -434,8 +406,6 @@ export default function EnglishStudyApp() {
     setStatus('idle');
 
     setCurrentAttempt((prev) => prev + 1);
-
-    setIsRecording(false);
   };
 
   if (isFinished) {
@@ -455,14 +425,14 @@ export default function EnglishStudyApp() {
 
         <button
           onClick={startTest}
-          className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-xl w-full font-bold transition mb-3"
+          className="bg-blue-500 text-white px-6 py-3 rounded-xl w-full font-bold mb-3"
         >
           다시 테스트
         </button>
 
         <button
           onClick={resetToMain}
-          className="bg-gray-200 hover:bg-gray-300 text-black px-6 py-3 rounded-xl w-full font-bold transition"
+          className="bg-gray-200 text-black px-6 py-3 rounded-xl w-full font-bold"
         >
           메인으로 돌아가기
         </button>
@@ -504,7 +474,7 @@ export default function EnglishStudyApp() {
         {status === 'idle' && (
           <button
             onClick={startListening}
-            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-4 rounded-xl font-bold w-full transition"
+            className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full"
           >
             발음 시작
           </button>
@@ -513,7 +483,7 @@ export default function EnglishStudyApp() {
         {status === 'listening' && (
           <button
             onClick={submitSpeaking}
-            className="bg-green-500 hover:bg-green-600 text-white px-6 py-4 rounded-xl font-bold w-full transition animate-pulse"
+            className="bg-green-500 text-white px-6 py-4 rounded-xl font-bold w-full animate-pulse"
           >
             제출하기
           </button>
@@ -539,7 +509,7 @@ export default function EnglishStudyApp() {
 
             <button
               onClick={handleRetry}
-              className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-bold w-full transition"
+              className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full"
             >
               다시 시도하기
             </button>
@@ -582,14 +552,14 @@ export default function EnglishStudyApp() {
 
         <button
           onClick={handleAddSentence}
-          className="bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-xl w-full font-bold transition"
+          className="bg-green-500 text-white px-4 py-3 rounded-xl w-full font-bold"
         >
           저장하기
         </button>
       </div>
 
       <div className="mb-6">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex justify-between mb-3">
           <div className="font-bold text-lg">
             저장된 문장
           </div>
@@ -599,7 +569,7 @@ export default function EnglishStudyApp() {
           </div>
         </div>
 
-        <div className="border rounded-2xl overflow-hidden bg-white">
+        <div className="border rounded-2xl overflow-hidden">
           <div className="max-h-[500px] overflow-y-auto">
             {sentences.length === 0 ? (
               <div className="p-6 text-center text-gray-400">
@@ -610,7 +580,7 @@ export default function EnglishStudyApp() {
                 (sentence, index) => (
                   <div
                     key={sentence.id}
-                    className="border-b last:border-b-0 p-4"
+                    className="border-b p-4"
                   >
                     <div className="flex justify-between gap-4">
                       <div className="flex-1">
@@ -630,7 +600,7 @@ export default function EnglishStudyApp() {
                             sentence.id
                           )
                         }
-                        className="text-red-500 text-sm shrink-0"
+                        className="text-red-500 text-sm"
                       >
                         삭제
                       </button>
@@ -645,7 +615,7 @@ export default function EnglishStudyApp() {
 
       <button
         onClick={startTest}
-        className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-4 rounded-xl w-full font-bold transition"
+        className="bg-blue-500 text-white px-6 py-4 rounded-xl w-full font-bold"
       >
         테스트 시작
       </button>
