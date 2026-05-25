@@ -61,6 +61,31 @@ export default function EnglishStudyApp() {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
   }, []);
 
+  // ── 텍스트 정규화 ────────────────────────────────────────
+  const normalizeText = (text: string) =>
+    text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  // ── CSV 파싱 (쉼표 포함 문장 대응) ──────────────────────
+  const parseCSVRow = (row: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < row.length; i++) {
+      const char = row[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
   // ── Google Sheet 동기화 ──────────────────────────────────
   const syncFromSheet = async () => {
     setIsSyncing(true);
@@ -69,16 +94,15 @@ export default function EnglishStudyApp() {
       const response = await fetch(url);
       const csv = await response.text();
 
-      const rows = csv.trim().split('\n').slice(1); // 헤더 제거
+      const rows = csv.trim().split('\n').slice(1);
       const parsed: Sentence[] = rows
         .map((row, index) => {
-          // CSV 파싱 (큰따옴표 제거)
-          const cols = row.split(',').map((c) => c.replace(/^"|"$/g, '').trim());
+          const cols = parseCSVRow(row);
           const en = cols[0] ?? '';
           const ko = cols[1] ?? '';
           return { id: index + 1, en, ko };
         })
-        .filter((s) => s.en && s.ko); // 빈 행 제거
+        .filter((s) => s.en && s.ko);
 
       if (parsed.length === 0) {
         alert('Sheet에서 문장을 찾을 수 없습니다. 헤더(en, ko)와 문장을 확인해주세요.');
@@ -139,11 +163,9 @@ export default function EnglishStudyApp() {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
-
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
-
       mediaRecorder.start();
       setStatus('recording');
     } catch (e) {
@@ -155,15 +177,12 @@ export default function EnglishStudyApp() {
   const stopAndSubmit = () => {
     const mediaRecorder = mediaRecorderRef.current;
     if (!mediaRecorder) return;
-
     setStatus('processing');
-
     mediaRecorder.onstop = async () => {
       mediaRecorder.stream.getTracks().forEach((t) => t.stop());
       const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
       await sendToGroq(audioBlob);
     };
-
     mediaRecorder.stop();
   };
 
@@ -178,15 +197,11 @@ export default function EnglishStudyApp() {
 
       const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}`,
-        },
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}` },
         body: formData,
       });
 
       if (!response.ok) {
-        const err = await response.text();
-        console.error('Groq API error:', err);
         setStatus('fail');
         setRecognizedText('API 오류가 발생했습니다.');
         return;
@@ -204,16 +219,12 @@ export default function EnglishStudyApp() {
       setRecognizedText(transcript);
       checkAnswer(transcript);
     } catch (e) {
-      console.error(e);
       setStatus('fail');
       setRecognizedText('네트워크 오류가 발생했습니다.');
     }
   };
 
   // ── 정답 판정 ────────────────────────────────────────────
-  const normalizeText = (text: string) =>
-    text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
-
   const calculateSimilarity = (user: string, answer: string) => {
     const userWords = normalizeText(user).split(' ');
     const answerWords = normalizeText(answer).split(' ');
@@ -225,7 +236,6 @@ export default function EnglishStudyApp() {
   const checkAnswer = (transcript: string) => {
     const current = testQueue[currentIndex];
     if (!current) return;
-
     const exactMatch = normalizeText(transcript) === normalizeText(current.en);
     const similarityMatch = calculateSimilarity(transcript, current.en) >= 0.9;
     const isCorrect = exactMatch || similarityMatch;
@@ -258,6 +268,22 @@ export default function EnglishStudyApp() {
     startRecording();
   };
 
+  // ── 정답 비교 하이라이트 ─────────────────────────────────
+  const highlightDiff = (transcript: string, answer: string) => {
+    const transcriptWords = transcript.trim().split(/\s+/);
+    const answerNormalized = normalizeText(answer).split(' ');
+
+    return transcriptWords.map((word, i) => {
+      const normalizedWord = normalizeText(word);
+      const isCorrect = answerNormalized[i] === normalizedWord;
+      return (
+        <span key={i} className={isCorrect ? 'text-blue-600' : 'text-red-500'}>
+          {word}{' '}
+        </span>
+      );
+    });
+  };
+
   const startTest = () => {
     if (sentences.length === 0) {
       alert('먼저 업데이트 버튼을 눌러 문장을 가져오세요.');
@@ -285,19 +311,6 @@ export default function EnglishStudyApp() {
     setIsFinished(false);
   };
 
-  const highlightDiff = (transcript: string, answer: string) => {
-    const transcriptWords = normalizeText(transcript).split(' ');
-    const answerWords = normalizeText(answer).split(' ');
-
-    return transcriptWords.map((word, i) => {
-      const isCorrect = answerWords[i] === word;
-      return (
-        <span key={i} className={isCorrect ? 'text-blue-600' : 'text-red-500'}>
-          {transcript.split(' ')[i]}{' '}
-        </span>
-      );
-    });
-  };
   // ── UI ───────────────────────────────────────────────────
 
   if (isFinished) {
@@ -319,14 +332,14 @@ export default function EnglishStudyApp() {
         <div className="mb-4 text-gray-500">{currentIndex + 1} / {testQueue.length}</div>
         <div className="bg-gray-100 p-6 rounded-xl text-2xl font-bold mb-8">{current.ko}</div>
 
-      {recognizedText && (
-  <div className="mb-6 text-xl font-bold break-words">
-    {status === 'success'
-      ? highlightDiff(recognizedText, testQueue[currentIndex]?.en ?? '')
-      : <span className="text-black">{recognizedText}</span>
-    }
-  </div>
-)}
+        {recognizedText && (
+          <div className="mb-6 text-xl font-bold break-words">
+            {status === 'success'
+              ? highlightDiff(recognizedText, current.en)
+              : <span className="text-black">{recognizedText}</span>
+            }
+          </div>
+        )}
 
         {status === 'idle' && (
           <button onClick={startRecording} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
@@ -348,14 +361,12 @@ export default function EnglishStudyApp() {
         )}
         {status === 'fail' && (
           <div className="mt-6">
-            <div className="mb-4">
-              {currentAttempt >= 4 && (
-                <>
-                  <div className="text-sm text-gray-500">정답 (참고용)</div>
-                  <div className="text-xl font-bold">{current.en}</div>
-                </>
-              )}
-            </div>
+            {currentAttempt >= 4 && (
+              <div className="mb-4">
+                <div className="text-sm text-gray-500">정답 (참고용)</div>
+                <div className="text-xl font-bold">{current.en}</div>
+              </div>
+            )}
             <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
               다시 시도하기
             </button>
@@ -368,8 +379,6 @@ export default function EnglishStudyApp() {
   return (
     <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black">
       <h1 className="text-3xl font-bold mb-6">영어 스피킹 학습</h1>
-
-      {/* 동기화 섹션 */}
       <div className="bg-gray-50 border rounded-2xl p-4 mb-6">
         <div className="flex justify-between items-center mb-2">
           <div className="font-bold text-lg">문장 목록</div>
@@ -386,7 +395,6 @@ export default function EnglishStudyApp() {
           {isSyncing ? '가져오는 중...' : '📥 Google Sheet에서 업데이트'}
         </button>
       </div>
-
       <button
         onClick={startTest}
         className="bg-blue-500 text-white px-6 py-4 rounded-xl w-full font-bold"
