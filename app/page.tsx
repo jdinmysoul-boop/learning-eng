@@ -184,10 +184,10 @@ export default function EnglishStudyApp() {
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
       audioOk.current?.play();
       setTimeout(() => { moveNext(); }, 1500);
-  } else {
+ } else {
   setStatus('fail');
   audioError.current?.play();
-  speakText(current.en); // setTimeout 제거, 즉시 호출
+  // speakText 제거
 }
   };
 
@@ -200,11 +200,15 @@ export default function EnglishStudyApp() {
     setCurrentIndex(next);
   };
 
-  const handleRetry = () => {
-    setRecognizedText('');
-    setCurrentAttempt((prev) => prev + 1);
-    startRecording();
-  };
+const handleRetry = () => {
+  // ✅ 버튼 탭 이벤트 안에서 직접 호출 → iOS 제스처 컨텍스트 유지
+  const current = testQueue[currentIndex];
+  if (current) speakText(current.en);
+
+  setRecognizedText('');
+  setCurrentAttempt((prev) => prev + 1);
+  startRecording();
+};
 
   const startTest = () => {
     if (sentences.length === 0) { alert('문장을 추가하세요.'); return; }
