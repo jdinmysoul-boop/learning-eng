@@ -83,6 +83,15 @@ export default function EnglishStudyApp() {
     saveSentences(sentences.filter((s) => s.id !== id));
   };
 
+  // ── TTS ──────────────────────────────────────────────────
+  const speakText = (text: string) => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.9;
+    window.speechSynthesis.speak(utterance);
+  };
+
   // ── 녹음 시작 ────────────────────────────────────────────
   const startRecording = async () => {
     try {
@@ -110,9 +119,7 @@ export default function EnglishStudyApp() {
     setStatus('processing');
 
     mediaRecorder.onstop = async () => {
-      // 마이크 트랙 해제
       mediaRecorder.stream.getTracks().forEach((t) => t.stop());
-
       const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
       await sendToGroq(audioBlob);
     };
@@ -124,7 +131,6 @@ export default function EnglishStudyApp() {
   const sendToGroq = async (audioBlob: Blob) => {
     try {
       const formData = new FormData();
-      // ✅ 파일명에 확장자 필수 (Groq API 요구사항)
       formData.append('file', audioBlob, 'audio.webm');
       formData.append('model', 'whisper-large-v3-turbo');
       formData.append('language', 'en');
@@ -179,9 +185,9 @@ export default function EnglishStudyApp() {
       audioOk.current?.play();
       setTimeout(() => { moveNext(); }, 1500);
     } else {
-  setStatus('fail');
-  audioError.current?.play();
-  setTimeout(() => { speakText(current.en); }, 600); // 오류음 후 0.6초 뒤 읽어줌
+      setStatus('fail');
+      audioError.current?.play();
+      setTimeout(() => { speakText(current.en); }, 600);
     }
   };
 
@@ -193,14 +199,6 @@ export default function EnglishStudyApp() {
     setCurrentAttempt(1);
     setCurrentIndex(next);
   };
-
-  const speakText = (text: string) => {
-  window.speechSynthesis.cancel(); // 이전 발화 중단
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'en-US';
-  utterance.rate = 0.9; // 약간 천천히
-  window.speechSynthesis.speak(utterance);
-};
 
   const handleRetry = () => {
     setRecognizedText('');
@@ -222,6 +220,7 @@ export default function EnglishStudyApp() {
   };
 
   const resetToMain = () => {
+    window.speechSynthesis.cancel();
     mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
     mediaRecorderRef.current = null;
     setRecognizedText('');
@@ -277,21 +276,21 @@ export default function EnglishStudyApp() {
         {status === 'success' && (
           <div className="mt-6 text-blue-500 text-2xl font-bold">정답!</div>
         )}
-       {status === 'fail' && (
-  <div className="mt-6">
-    <div className="mb-4">
-      {currentAttempt >= 4 && ( // 4번째 시도부터만 표시
-        <>
-          <div className="text-sm text-gray-500">정답 (참고용)</div>
-          <div className="text-xl font-bold">{current.en}</div>
-        </>
-      )}
-    </div>
-    <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
-      다시 시도하기
-    </button>
-  </div>
-)}
+        {status === 'fail' && (
+          <div className="mt-6">
+            <div className="mb-4">
+              {currentAttempt >= 4 && (
+                <>
+                  <div className="text-sm text-gray-500">정답 (참고용)</div>
+                  <div className="text-xl font-bold">{current.en}</div>
+                </>
+              )}
+            </div>
+            <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
+              다시 시도하기
+            </button>
+          </div>
+        )}
       </div>
     );
   }
