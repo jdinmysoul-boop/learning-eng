@@ -69,16 +69,17 @@ export default function EnglishStudyApp() {
       const response = await fetch(url);
       const csv = await response.text();
 
-      const rows = csv.trim().split('\n').slice(1); // 헤더 제거
-      const parsed: Sentence[] = rows
-        .map((row, index) => {
-          // CSV 파싱 (큰따옴표 제거)
-          const cols = row.split(',').map((c) => c.replace(/^"|"$/g, '').trim());
-          const en = cols[0] ?? '';
-          const ko = cols[1] ?? '';
-          return { id: index + 1, en, ko };
-        })
-        .filter((s) => s.en && s.ko); // 빈 행 제거
+     const rows = csv.trim().split('\n').slice(1);
+const parsed: Sentence[] = rows
+  .map((row, index) => {
+    // 큰따옴표로 감싸진 필드를 올바르게 파싱
+    const matches = row.match(/("([^"]*)")|([^,]+)/g);
+    if (!matches || matches.length < 2) return null;
+    const en = matches[0].replace(/^"|"$/g, '').trim();
+    const ko = matches[1].replace(/^"|"$/g, '').trim();
+    return { id: index + 1, en, ko };
+  })
+  .filter((s): s is Sentence => !!s && !!s.en && !!s.ko);
 
       if (parsed.length === 0) {
         alert('Sheet에서 문장을 찾을 수 없습니다. 헤더(en, ko)와 문장을 확인해주세요.');
