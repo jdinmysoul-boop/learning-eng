@@ -10,10 +10,10 @@ interface Sentence {
 
 type Status = 'idle' | 'recording' | 'processing' | 'success' | 'fail';
 
+const SHEET_ID = '1tF8q2r8BxnK6V_x_KHfQlV81Q5FsL069NTTyj1SjtUQ';
+
 export default function EnglishStudyApp() {
   const [sentences, setSentences] = useState<Sentence[]>([]);
-  const [inputEn, setInputEn] = useState('');
-  const [inputKo, setInputKo] = useState('');
   const [isTesting, setIsTesting] = useState(false);
   const [testQueue, setTestQueue] = useState<Sentence[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -22,6 +22,8 @@ export default function EnglishStudyApp() {
   const [isFinished, setIsFinished] = useState(false);
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [firstTryCount, setFirstTryCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<string>('');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -31,6 +33,9 @@ export default function EnglishStudyApp() {
   useEffect(() => {
     const saved = localStorage.getItem('study_sentences');
     if (saved) setSentences(JSON.parse(saved));
+
+    const savedDate = localStorage.getItem('study_last_synced');
+    if (savedDate) setLastSynced(savedDate);
 
     const createBeep = (frequency: number) => ({
       play: () => {
@@ -56,65 +61,76 @@ export default function EnglishStudyApp() {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
   }, []);
 
-  const saveSentences = (updated: Sentence[]) => {
-    setSentences(updated);
-    localStorage.setItem('study_sentences', JSON.stringify(updated));
-  };
+  // ── Google Sheet 동기화 ──────────────────────────────────
+  const syncFromSheet = async () => {
+    setIsSyncing(true);
+    try {
+      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv`;
+      const response = await fetch(url);
+      const csv = await response.text();
 
-  const normalizeText = (text: string) =>
-    text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const rows = csv.trim().split('\n').slice(1); // 헤더 제거
+      const parsed: Sentence[] = rows
+        .map((row, index) => {
+          // CSV 파싱 (큰따옴표 제거)
+          const cols = row.split(',').map((c) => c.replace(/^"|"$/g, '').trim());
+          const en = cols[0] ?? '';
+          const ko = cols[1] ?? '';
+          return { id: index + 1, en, ko };
+        })
+        .filter((s) => s.en && s.ko); // 빈 행 제거
 
-  const calculateSimilarity = (user: string, answer: string) => {
-    const userWords = normalizeText(user).split(' ');
-    const answerWords = normalizeText(answer).split(' ');
-    let matched = 0;
-    answerWords.forEach((w) => { if (userWords.includes(w)) matched++; });
-    return matched / answerWords.length;
-  };
+      if (parsed.length === 0) {
+        alert('Sheet에서 문장을 찾을 수 없습니다. 헤더(en, ko)와 문장을 확인해주세요.');
+        return;
+      }
 
-  const handleAddSentence = () => {
-    if (!inputEn.trim() || !inputKo.trim()) return;
-    saveSentences([...sentences, { id: Date.now(), en: inputEn.trim(), ko: inputKo.trim() }]);
-    setInputEn('');
-    setInputKo('');
-  };
+      setSentences(parsed);
+      localStorage.setItem('study_sentences', JSON.stringify(parsed));
 
-  const handleDeleteSentence = (id: number) => {
-    saveSentences(sentences.filter((s) => s.id !== id));
+      const now = new Date().toLocaleString('ko-KR');
+      setLastSynced(now);
+      localStorage.setItem('study_last_synced', now);
+
+      alert(`${parsed.length}개 문장을 가져왔습니다.`);
+    } catch (e) {
+      console.error(e);
+      alert('동기화 실패. Sheet가 공개 설정인지 확인해주세요.');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   // ── TTS ──────────────────────────────────────────────────
-const speakText = async (text: string) => {
-  try {
-    const response = await fetch(
-      `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.NEXT_PUBLIC_GOOGLE_TTS_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          input: { text },
-          voice: {
-            languageCode: 'en-US',
-            name: 'en-US-Wavenet-D',
-            ssmlGender: 'MALE',
-          },
-          audioConfig: {
-            audioEncoding: 'MP3',
-            speakingRate: 0.9,
-          },
-        }),
-      }
-    );
-
-    const data = await response.json();
-    if (!data.audioContent) return;
-
-    const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
-    audio.play();
-  } catch (e) {
-    console.error('TTS error:', e);
-  }
-};
+  const speakText = async (text: string) => {
+    try {
+      const response = await fetch(
+        `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.NEXT_PUBLIC_GOOGLE_TTS_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input: { text },
+            voice: {
+              languageCode: 'en-US',
+              name: 'en-US-Wavenet-D',
+              ssmlGender: 'MALE',
+            },
+            audioConfig: {
+              audioEncoding: 'MP3',
+              speakingRate: 0.9,
+            },
+          }),
+        }
+      );
+      const data = await response.json();
+      if (!data.audioContent) return;
+      const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+      audio.play();
+    } catch (e) {
+      console.error('TTS error:', e);
+    }
+  };
 
   // ── 녹음 시작 ────────────────────────────────────────────
   const startRecording = async () => {
@@ -195,6 +211,17 @@ const speakText = async (text: string) => {
   };
 
   // ── 정답 판정 ────────────────────────────────────────────
+  const normalizeText = (text: string) =>
+    text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  const calculateSimilarity = (user: string, answer: string) => {
+    const userWords = normalizeText(user).split(' ');
+    const answerWords = normalizeText(answer).split(' ');
+    let matched = 0;
+    answerWords.forEach((w) => { if (userWords.includes(w)) matched++; });
+    return matched / answerWords.length;
+  };
+
   const checkAnswer = (transcript: string) => {
     const current = testQueue[currentIndex];
     if (!current) return;
@@ -208,11 +235,10 @@ const speakText = async (text: string) => {
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
       audioOk.current?.play();
       setTimeout(() => { moveNext(); }, 1500);
- } else {
-  setStatus('fail');
-  audioError.current?.play();
-  // speakText 제거
-}
+    } else {
+      setStatus('fail');
+      audioError.current?.play();
+    }
   };
 
   const moveNext = () => {
@@ -224,18 +250,19 @@ const speakText = async (text: string) => {
     setCurrentIndex(next);
   };
 
-const handleRetry = () => {
-  // ✅ 버튼 탭 이벤트 안에서 직접 호출 → iOS 제스처 컨텍스트 유지
-  const current = testQueue[currentIndex];
-  if (current) speakText(current.en);
-
-  setRecognizedText('');
-  setCurrentAttempt((prev) => prev + 1);
-  startRecording();
-};
+  const handleRetry = () => {
+    const current = testQueue[currentIndex];
+    if (current) speakText(current.en);
+    setRecognizedText('');
+    setCurrentAttempt((prev) => prev + 1);
+    startRecording();
+  };
 
   const startTest = () => {
-    if (sentences.length === 0) { alert('문장을 추가하세요.'); return; }
+    if (sentences.length === 0) {
+      alert('먼저 업데이트 버튼을 눌러 문장을 가져오세요.');
+      return;
+    }
     const shuffled = [...sentences].sort(() => Math.random() - 0.5);
     setTestQueue(shuffled.slice(0, 50));
     setCurrentIndex(0);
@@ -248,7 +275,6 @@ const handleRetry = () => {
   };
 
   const resetToMain = () => {
-    window.speechSynthesis.cancel();
     mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
     mediaRecorderRef.current = null;
     setRecognizedText('');
@@ -265,7 +291,7 @@ const handleRetry = () => {
     return (
       <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black text-center">
         <h1 className="text-3xl font-bold mb-4">테스트 완료</h1>
-        <p className="text-xl mb-6">첫 시도 성공: <strong>{firstTryCount}</strong></p>
+        <p className="text-xl mb-6">첫 시도 성공: <strong>{firstTryCount}</strong> / {testQueue.length}</p>
         <button onClick={startTest} className="bg-blue-500 text-white px-6 py-3 rounded-xl w-full font-bold mb-3">다시 테스트</button>
         <button onClick={resetToMain} className="bg-gray-200 text-black px-6 py-3 rounded-xl w-full font-bold">메인으로 돌아가기</button>
       </div>
@@ -326,52 +352,29 @@ const handleRetry = () => {
   return (
     <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black">
       <h1 className="text-3xl font-bold mb-6">영어 스피킹 학습</h1>
-      <div className="mb-6">
-        <h2 className="text-lg font-bold mb-2">새 문장 추가</h2>
-        <input
-          type="text"
-          placeholder="영어 문장"
-          value={inputEn}
-          onChange={(e) => setInputEn(e.target.value)}
-          className="w-full border p-3 rounded-xl mb-2 bg-white text-black"
-        />
-        <input
-          type="text"
-          placeholder="한글 뜻"
-          value={inputKo}
-          onChange={(e) => setInputKo(e.target.value)}
-          className="w-full border p-3 rounded-xl mb-2 bg-white text-black"
-        />
-        <button onClick={handleAddSentence} className="bg-green-500 text-white px-4 py-3 rounded-xl w-full font-bold">
-          저장하기
-        </button>
-      </div>
-      <div className="mb-6">
-        <div className="flex justify-between mb-3">
-          <div className="font-bold text-lg">저장된 문장</div>
+
+      {/* 동기화 섹션 */}
+      <div className="bg-gray-50 border rounded-2xl p-4 mb-6">
+        <div className="flex justify-between items-center mb-2">
+          <div className="font-bold text-lg">문장 목록</div>
           <div className="text-sm text-gray-500">총 {sentences.length}개</div>
         </div>
-        <div className="border rounded-2xl overflow-hidden">
-          <div className="max-h-[500px] overflow-y-auto">
-            {sentences.length === 0 ? (
-              <div className="p-6 text-center text-gray-400">저장된 문장이 없습니다.</div>
-            ) : (
-              sentences.map((sentence, index) => (
-                <div key={sentence.id} className="border-b p-4">
-                  <div className="flex justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="font-bold break-words">{index + 1}. {sentence.en}</div>
-                      <div className="text-sm text-gray-500 mt-1 break-words">{sentence.ko}</div>
-                    </div>
-                    <button onClick={() => handleDeleteSentence(sentence.id)} className="text-red-500 text-sm">삭제</button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        {lastSynced && (
+          <div className="text-xs text-gray-400 mb-3">마지막 업데이트: {lastSynced}</div>
+        )}
+        <button
+          onClick={syncFromSheet}
+          disabled={isSyncing}
+          className="bg-green-500 text-white px-4 py-3 rounded-xl w-full font-bold disabled:bg-gray-300"
+        >
+          {isSyncing ? '가져오는 중...' : '📥 Google Sheet에서 업데이트'}
+        </button>
       </div>
-      <button onClick={startTest} className="bg-blue-500 text-white px-6 py-4 rounded-xl w-full font-bold">
+
+      <button
+        onClick={startTest}
+        className="bg-blue-500 text-white px-6 py-4 rounded-xl w-full font-bold"
+      >
         테스트 시작
       </button>
     </div>
