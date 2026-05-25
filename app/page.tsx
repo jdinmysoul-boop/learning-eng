@@ -84,23 +84,36 @@ export default function EnglishStudyApp() {
   };
 
   // ── TTS ──────────────────────────────────────────────────
-const speakText = (text: string) => {
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'en-US';
-  utterance.rate = 0.85;
-  utterance.pitch = 1;
+const speakText = async (text: string) => {
+  try {
+    const response = await fetch(
+      `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.NEXT_PUBLIC_GOOGLE_TTS_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: { text },
+          voice: {
+            languageCode: 'en-US',
+            name: 'en-US-Wavenet-D',
+            ssmlGender: 'MALE',
+          },
+          audioConfig: {
+            audioEncoding: 'MP3',
+            speakingRate: 0.9,
+          },
+        }),
+      }
+    );
 
-  // ✅ 영어 원어민 음성 명시적 선택
-  const voices = window.speechSynthesis.getVoices();
-  const englishVoice =
-    voices.find((v) => v.name === 'Samantha') ||           // iOS 기본 영어 음성
-    voices.find((v) => v.name.includes('Google US English')) || // Chrome
-    voices.find((v) => v.lang === 'en-US' && !v.localService === false) ||
-    voices.find((v) => v.lang === 'en-US');                // 그 외 en-US
+    const data = await response.json();
+    if (!data.audioContent) return;
 
-  if (englishVoice) utterance.voice = englishVoice;
-  window.speechSynthesis.speak(utterance);
+    const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+    audio.play();
+  } catch (e) {
+    console.error('TTS error:', e);
+  }
 };
 
   // ── 녹음 시작 ────────────────────────────────────────────
