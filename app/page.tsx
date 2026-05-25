@@ -184,11 +184,11 @@ export default function EnglishStudyApp() {
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
       audioOk.current?.play();
       setTimeout(() => { moveNext(); }, 1500);
-    } else {
-      setStatus('fail');
-      audioError.current?.play();
-      setTimeout(() => { speakText(current.en); }, 600);
-    }
+  } else {
+  setStatus('fail');
+  audioError.current?.play();
+  speakText(current.en); // setTimeout 제거, 즉시 호출
+}
   };
 
   const moveNext = () => {
