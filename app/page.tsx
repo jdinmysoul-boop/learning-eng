@@ -84,13 +84,24 @@ export default function EnglishStudyApp() {
   };
 
   // ── TTS ──────────────────────────────────────────────────
-  const speakText = (text: string) => {
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.9;
-    window.speechSynthesis.speak(utterance);
-  };
+const speakText = (text: string) => {
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-US';
+  utterance.rate = 0.85;
+  utterance.pitch = 1;
+
+  // ✅ 영어 원어민 음성 명시적 선택
+  const voices = window.speechSynthesis.getVoices();
+  const englishVoice =
+    voices.find((v) => v.name === 'Samantha') ||           // iOS 기본 영어 음성
+    voices.find((v) => v.name.includes('Google US English')) || // Chrome
+    voices.find((v) => v.lang === 'en-US' && !v.localService === false) ||
+    voices.find((v) => v.lang === 'en-US');                // 그 외 en-US
+
+  if (englishVoice) utterance.voice = englishVoice;
+  window.speechSynthesis.speak(utterance);
+};
 
   // ── 녹음 시작 ────────────────────────────────────────────
   const startRecording = async () => {
