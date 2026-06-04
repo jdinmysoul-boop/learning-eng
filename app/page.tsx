@@ -290,7 +290,7 @@ export default function EnglishStudyApp() {
       return;
     }
     const shuffled = [...sentences].sort(() => Math.random() - 0.5);
-    setTestQueue(shuffled.slice(0, 50));
+    setTestQueue(shuffled.slice(0, 30));
     setCurrentIndex(0);
     setRecognizedText('');
     setStatus('idle');
