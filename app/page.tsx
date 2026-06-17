@@ -283,14 +283,22 @@ export default function EnglishStudyApp() {
       );
     });
   };
-
+// 이 함수를 추가하세요 (startTest 위에)
+const shuffleArray = <T,>(array: T[]): T[] => {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+};
   const startTest = () => {
     if (sentences.length === 0) {
       alert('먼저 업데이트 버튼을 눌러 문장을 가져오세요.');
       return;
     }
-    const shuffled = [...sentences].sort(() => Math.random() - 0.5);
-    setTestQueue(shuffled.slice(0, 30));
+    const shuffled = shuffleArray(sentences);
+setTestQueue(shuffled.slice(0, 30));
     setCurrentIndex(0);
     setRecognizedText('');
     setStatus('idle');
@@ -333,13 +341,19 @@ export default function EnglishStudyApp() {
         <div className="bg-gray-100 p-6 rounded-xl text-2xl font-bold mb-8">{current.ko}</div>
 
         {recognizedText && (
-          <div className="mb-6 text-xl font-bold break-words">
-            {status === 'success'
-              ? highlightDiff(recognizedText, current.en)
-              : <span className="text-black">{recognizedText}</span>
-            }
-          </div>
-        )}
+  <div className="mb-2 text-xl font-bold break-words">
+    {status === 'success'
+      ? highlightDiff(recognizedText, current.en)
+      : <span className="text-black">{recognizedText}</span>
+    }
+  </div>
+)}
+{status === 'success' && (
+  <div className="mb-6 text-left bg-blue-50 p-3 rounded-xl">
+    <div className="text-xs text-gray-500 mb-1">정답 문장</div>
+    <div className="text-base text-gray-700">{current.en}</div>
+  </div>
+)}
 
         {status === 'idle' && (
           <button onClick={startRecording} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
