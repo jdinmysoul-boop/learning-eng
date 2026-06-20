@@ -262,13 +262,14 @@ export default function EnglishStudyApp() {
 
   // ── 다음 문장으로 이동 + 바로 녹음 시작 ──────────────────
   const moveToNextAndRecord = () => {
-    const next = currentIndex + 1;
-    if (next >= testQueue.length) { setIsFinished(true); return; }
-    setRecognizedText('');
-    setCurrentAttempt(1);
-    setCurrentIndex(next);
-    startRecording(); // 바로 녹음 시작
-  };
+  const next = currentIndex + 1;
+  if (next >= testQueue.length) { setIsFinished(true); return; }
+  setStatus('idle');       // ✅ 정답/오답 표시와 정답문장 블록을 즉시 숨김
+  setRecognizedText('');
+  setCurrentAttempt(1);
+  setCurrentIndex(next);
+  startRecording();        // 곧바로 recording 상태로 전환됨
+};
 
   // ── 다시 시도하기 (오답) ─────────────────────────────────
   const handleRetry = () => {
