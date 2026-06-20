@@ -65,12 +65,11 @@ export default function EnglishStudyApp() {
   const normalizeText = (text: string) =>
     text.replace(/[^\w\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
-  // ── CSV 파싱 (쉼표 포함 문장 대응) ──────────────────────
+  // ── CSV 파싱 ─────────────────────────────────────────────
   const parseCSVRow = (row: string): string[] => {
     const result: string[] = [];
     let current = '';
     let inQuotes = false;
-
     for (let i = 0; i < row.length; i++) {
       const char = row[i];
       if (char === '"') {
@@ -83,6 +82,16 @@ export default function EnglishStudyApp() {
       }
     }
     result.push(current.trim());
+    return result;
+  };
+
+  // ── Fisher-Yates 셔플 ────────────────────────────────────
+  const shuffleArray = <T,>(array: T[]): T[] => {
+    const result = [...array];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
     return result;
   };
 
@@ -244,25 +253,25 @@ export default function EnglishStudyApp() {
       setStatus('success');
       if (currentAttempt === 1) setFirstTryCount((prev) => prev + 1);
       audioOk.current?.play();
-      setTimeout(() => { moveNext(); }, 1500);
+      // ✅ 자동 전환 제거 — "다음 문장" 버튼으로 사용자가 직접 넘어감
     } else {
       setStatus('fail');
       audioError.current?.play();
     }
   };
 
-  const moveNext = () => {
+  // ── 다음 문장으로 이동 + 바로 녹음 시작 ──────────────────
+  const moveToNextAndRecord = () => {
     const next = currentIndex + 1;
     if (next >= testQueue.length) { setIsFinished(true); return; }
     setRecognizedText('');
-    setStatus('idle');
     setCurrentAttempt(1);
     setCurrentIndex(next);
+    startRecording(); // 바로 녹음 시작
   };
 
+  // ── 다시 시도하기 (오답) ─────────────────────────────────
   const handleRetry = () => {
-    const current = testQueue[currentIndex];
-    if (current) speakText(current.en);
     setRecognizedText('');
     setCurrentAttempt((prev) => prev + 1);
     startRecording();
@@ -283,22 +292,14 @@ export default function EnglishStudyApp() {
       );
     });
   };
-// 이 함수를 추가하세요 (startTest 위에)
-const shuffleArray = <T,>(array: T[]): T[] => {
-  const result = [...array];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-};
+
   const startTest = () => {
     if (sentences.length === 0) {
       alert('먼저 업데이트 버튼을 눌러 문장을 가져오세요.');
       return;
     }
     const shuffled = shuffleArray(sentences);
-setTestQueue(shuffled.slice(0, 30));
+    setTestQueue(shuffled.slice(0, 30));
     setCurrentIndex(0);
     setRecognizedText('');
     setStatus('idle');
@@ -335,25 +336,30 @@ setTestQueue(shuffled.slice(0, 30));
   if (isTesting) {
     const current = testQueue[currentIndex];
     if (!current) return null;
+
+    // 정답 문장을 보여줄지 여부: 3회 연속 오답(4번째 시도) 또는 정답일 때
+    const showAnswerSentence = status === 'success' || (status === 'fail' && currentAttempt >= 4);
+
     return (
       <div className="p-6 max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-lg text-black text-center">
         <div className="mb-4 text-gray-500">{currentIndex + 1} / {testQueue.length}</div>
         <div className="bg-gray-100 p-6 rounded-xl text-2xl font-bold mb-8">{current.ko}</div>
 
         {recognizedText && (
-  <div className="mb-2 text-xl font-bold break-words">
-    {status === 'success'
-      ? highlightDiff(recognizedText, current.en)
-      : <span className="text-black">{recognizedText}</span>
-    }
-  </div>
-)}
-{status === 'success' && (
-  <div className="mb-6 text-left bg-blue-50 p-3 rounded-xl">
-    <div className="text-xs text-gray-500 mb-1">정답 문장</div>
-    <div className="text-base text-gray-700">{current.en}</div>
-  </div>
-)}
+          <div className="mb-2 text-xl font-bold break-words text-left">
+            {status === 'success'
+              ? highlightDiff(recognizedText, current.en)
+              : <span className="text-black">{recognizedText}</span>
+            }
+          </div>
+        )}
+
+        {showAnswerSentence && (
+          <div className="mb-6 text-left bg-gray-50 p-3 rounded-xl">
+            <div className="text-xs text-gray-500 mb-1">정답 문장</div>
+            <div className="text-base text-black font-bold">{current.en}</div>
+          </div>
+        )}
 
         {status === 'idle' && (
           <button onClick={startRecording} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
@@ -371,20 +377,14 @@ setTestQueue(shuffled.slice(0, 30));
           </button>
         )}
         {status === 'success' && (
-          <div className="mt-6 text-blue-500 text-2xl font-bold">정답!</div>
+          <button onClick={moveToNextAndRecord} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
+            다음 문장 →
+          </button>
         )}
         {status === 'fail' && (
-          <div className="mt-6">
-            {currentAttempt >= 4 && (
-              <div className="mb-4">
-                <div className="text-sm text-gray-500">정답 (참고용)</div>
-                <div className="text-xl font-bold">{current.en}</div>
-              </div>
-            )}
-            <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
-              다시 시도하기
-            </button>
-          </div>
+          <button onClick={handleRetry} className="bg-red-500 text-white px-6 py-3 rounded-xl font-bold w-full">
+            다시 시도하기
+          </button>
         )}
       </div>
     );
