@@ -272,10 +272,12 @@ export default function EnglishStudyApp() {
 
   // ── 다시 시도하기 (오답) ─────────────────────────────────
   const handleRetry = () => {
-    setRecognizedText('');
-    setCurrentAttempt((prev) => prev + 1);
-    startRecording();
-  };
+  const current = testQueue[currentIndex];
+  if (current) speakText(current.en); // ✅ 오답 정답 음성 재생 복원
+  setRecognizedText('');
+  setCurrentAttempt((prev) => prev + 1);
+  startRecording();
+};
 
   // ── 정답 비교 하이라이트 ─────────────────────────────────
   const highlightDiff = (transcript: string, answer: string) => {
@@ -345,21 +347,31 @@ export default function EnglishStudyApp() {
         <div className="mb-4 text-gray-500">{currentIndex + 1} / {testQueue.length}</div>
         <div className="bg-gray-100 p-6 rounded-xl text-2xl font-bold mb-8">{current.ko}</div>
 
-        {recognizedText && (
-          <div className="mb-2 text-xl font-bold break-words text-left">
-            {status === 'success'
-              ? highlightDiff(recognizedText, current.en)
-              : <span className="text-black">{recognizedText}</span>
-            }
-          </div>
-        )}
+        {status === 'success' && (
+  <div className="mb-3 text-2xl font-bold text-blue-600">✅ 정답!</div>
+)}
+{status === 'fail' && (
+  <div className="mb-3 text-2xl font-bold text-red-500">❌ 오답</div>
+)}
 
-        {showAnswerSentence && (
-          <div className="mb-6 text-left bg-gray-50 p-3 rounded-xl">
-            <div className="text-xs text-gray-500 mb-1">정답 문장</div>
-            <div className="text-base text-black font-bold">{current.en}</div>
-          </div>
-        )}
+{recognizedText && (
+  <div className="mb-2 text-left">
+    <div className="text-xs text-gray-500 mb-1">내가 말한 문장</div>
+    <div className="text-xl font-bold break-words">
+      {status === 'success'
+        ? highlightDiff(recognizedText, current.en)
+        : <span className="text-black">{recognizedText}</span>
+      }
+    </div>
+  </div>
+)}
+
+{showAnswerSentence && (
+  <div className="mb-6 text-left bg-gray-50 p-3 rounded-xl">
+    <div className="text-xs text-gray-500 mb-1">정답 문장</div>
+    <div className="text-base text-black font-bold">{current.en}</div>
+  </div>
+)}
 
         {status === 'idle' && (
           <button onClick={startRecording} className="bg-blue-500 text-white px-6 py-4 rounded-xl font-bold w-full">
